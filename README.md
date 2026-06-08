@@ -84,6 +84,13 @@ Each round cycles through four phases. Speaking order and cross-juror rebuttals
 are **score-driven**, so the room reshuffles every round instead of replaying a
 fixed script.
 
+<p align="center">
+  <img src="docs/deliberation-loop.png" alt="Multi-agent LLM jury deliberation loop" width="820">
+</p>
+
+<details>
+<summary>📐 Mermaid source</summary>
+
 ```mermaid
 flowchart LR
     RS([📣 round_start]) --> AI[🗣️ AI phase<br/>speak by score]
@@ -103,6 +110,8 @@ flowchart LR
     class AI,INT,HUMAN,CV,SCORE phase;
     class RESP,TALLY gate;
 ```
+
+</details>
 
 > **Score dynamics:** after a juror speaks, their `speaking_score` decays (×0.6)
 > while everyone else's `responding_score` climbs (+0.08). Your human input nudges
