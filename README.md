@@ -85,29 +85,22 @@ are **score-driven**, so the room reshuffles every round instead of replaying a
 fixed script.
 
 ```mermaid
-flowchart TD
-    START(["⚖️ Convene the jury"]) --> RS["📣 round_start"]
-    RS --> AI["🗣️ <b>AI phase</b><br/>jurors speak, ordered by speaking_score<br/>each: think → lookup evidence → grounded speak"]
-    AI --> RESP{"any juror's<br/>responding_score ≥ 0.6?"}
-    RESP -- yes --> INT["💬 <b>Response phase</b><br/>top responder interjects a<br/>direct rebuttal to the last speaker"]
-    RESP -- no --> HUMAN
-    INT --> HUMAN["🧑‍⚖️ <b>Human phase (you)</b><br/>Speak · Hint · Vote · Reject · Exit"]
-    HUMAN -- "Exit" --> EXIT(["finish: exited"])
-    HUMAN -- "Vote / Reject" --> CV["🗳️ <b>Closing votes</b><br/>every AI juror revotes with a reason"]
-    CV --> TALLY{"tally"}
-    TALLY -- "unanimous" --> WIN(["finish: verdict reached"])
-    TALLY -- "max rounds hit" --> HUNG(["finish: hung jury"])
-    TALLY -- "still split" --> NR["next_round"] --> RS
-    WIN --> SCORE["📊 <b>LLM-as-a-Judge</b><br/>5-dimension scorecard + recap"]
-    HUNG --> SCORE
-    EXIT --> SCORE
-    SCORE --> DONE(["✅ done"])
+flowchart LR
+    RS([📣 round_start]) --> AI[🗣️ AI phase<br/>speak by score]
+    AI --> RESP{resp_score<br/>≥ 0.6?}
+    RESP -- yes --> INT[💬 rebuttal]
+    RESP -- no --> HUMAN[🧑‍⚖️ Human turn]
+    INT --> HUMAN
+    HUMAN -- "Exit" --> SCORE
+    HUMAN -- "Vote / Reject" --> CV[🗳️ Closing votes]
+    CV --> TALLY{tally}
+    TALLY -- "split" --> RS
+    TALLY -- "unanimous / hung" --> SCORE[📊 LLM-as-Judge<br/>scorecard]
+    SCORE --> DONE([✅ done])
 
     classDef phase fill:#eef2ff,stroke:#6366f1,color:#3730a3;
-    classDef term fill:#ecfdf5,stroke:#10b981,color:#065f46;
     classDef gate fill:#fff7ed,stroke:#f59e0b,color:#92400e;
-    class AI,INT,HUMAN,CV,SCORE,RS,NR phase;
-    class START,EXIT,WIN,HUNG,DONE term;
+    class AI,INT,HUMAN,CV,SCORE phase;
     class RESP,TALLY gate;
 ```
 
@@ -138,7 +131,7 @@ sequenceDiagram
     TOOL-->>LLM: 📎 tool_result (observe)
     LLM-->>ENG: 🗣️ grounded statement + vote
     ENG->>ENG: emit speak · update transcript & scores
-    Note over ENG,RAG: every LLM call is wrapped in retry +<br/>parse-fallback; failures surface as error events,<br/>never crash the game
+    Note over ENG,RAG: Every LLM call is wrapped in retry + parse-fallback — failures surface as error events and never crash the game
 ```
 
 ## 🚀 Run it (local, live Gemini)
