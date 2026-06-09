@@ -55,6 +55,7 @@ def _max_rounds() -> int:
 class CreateReq(BaseModel):
     mode: str = "scripted"          # "scripted" | "dynamic"
     case_id: str | None = None
+    lang: str = "en"                # "en" | "zh"
 
 
 class ActionReq(BaseModel):
@@ -62,19 +63,26 @@ class ActionReq(BaseModel):
     text: str | None = ""
 
 
-async def _run(session: GameSession, mode: str, case_id: str | None) -> None:
+async def _run(session: GameSession, mode: str, case_id: str | None, lang: str) -> None:
     try:
-        case = cases.get_case(case_id)
+        case = cases.get_case(case_id, lang)
         if _fake_mode():
             from jury.stub import StubLLM, offline_embed
             retriever = EvidenceRetriever(case.evidence, embed_fn=offline_embed)
             await asyncio.to_thread(retriever.build)
-            llm = StubLLM(retriever)
+            llm = StubLLM(retriever, lang=lang)
+        elif config.provider() == "deepseek":
+            # DeepSeek has no embeddings endpoint → RAG uses the local CJK embedder.
+            from jury.deepseek_llm import DeepSeekLLM
+            from jury.stub import offline_embed
+            retriever = EvidenceRetriever(case.evidence, embed_fn=offline_embed)
+            await asyncio.to_thread(retriever.build)
+            llm = DeepSeekLLM(retriever, lang=lang)
         else:
             retriever = EvidenceRetriever(case.evidence)
             await asyncio.to_thread(retriever.build)    # embed evidence up front
-            llm = JuryLLM(retriever)
-        jurors = await asyncio.to_thread(personas.build_jurors, case, mode, llm)
+            llm = JuryLLM(retriever, lang=lang)
+        jurors = await asyncio.to_thread(personas.build_jurors, case, mode, llm, lang)
         state = GameState(case_id=case.id, round=1, jurors=jurors, max_rounds=_max_rounds())
 
         async def emit(ev: dict) -> None:
@@ -95,12 +103,13 @@ async def _run(session: GameSession, mode: str, case_id: str | None) -> None:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True, "has_key": config.has_key(), "fake": _fake_mode()}
+    return {"ok": True, "has_key": config.has_key(), "fake": _fake_mode(),
+            "provider": "stub" if _fake_mode() else config.provider()}
 
 
 @app.get("/api/cases")
-def list_cases() -> list[dict]:
-    return [c.public() for c in cases.CASES.values()]
+def list_cases(lang: str = "en") -> list[dict]:
+    return [cases.get_case(cid, lang).public() for cid in cases.CASES]
 
 
 @app.post("/api/game")
@@ -114,8 +123,9 @@ async def create_game(req: CreateReq) -> dict:
     gid = uuid.uuid4().hex[:12]
     session = GameSession(id=gid)
     GAMES[gid] = session
-    session.task = asyncio.create_task(_run(session, req.mode, req.case_id))
-    return {"game_id": gid, "case": cases.get_case(req.case_id).public(), "mode": req.mode}
+    session.task = asyncio.create_task(_run(session, req.mode, req.case_id, req.lang))
+    return {"game_id": gid, "case": cases.get_case(req.case_id, req.lang).public(),
+            "mode": req.mode, "lang": req.lang}
 
 
 @app.get("/api/game/{gid}/stream")

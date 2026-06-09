@@ -14,21 +14,26 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export function listCases(): Promise<CaseInfo[]> {
-  return fetch("/api/cases").then(json<CaseInfo[]>);
+export function listCases(lang: string = "en"): Promise<CaseInfo[]> {
+  return fetch(`/api/cases?lang=${lang}`).then(json<CaseInfo[]>);
 }
 
 export interface CreateResult {
   game_id: string;
   case: CaseInfo;
   mode: string;
+  lang: string;
 }
 
-export function createGame(mode: "scripted" | "dynamic", caseId?: string): Promise<CreateResult> {
+export function createGame(
+  mode: "scripted" | "dynamic",
+  lang: string = "en",
+  caseId?: string
+): Promise<CreateResult> {
   return fetch("/api/game", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode, case_id: caseId ?? null }),
+    body: JSON.stringify({ mode, case_id: caseId ?? null, lang }),
   }).then(json<CreateResult>);
 }
 

@@ -21,5 +21,24 @@ def ensure_env() -> None:
         os.environ["GOOGLE_API_KEY"] = gemini
 
 
-def has_key() -> bool:
+def has_gemini() -> bool:
     return bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
+
+
+def has_deepseek() -> bool:
+    return bool(os.environ.get("DEEPSEEK_API_KEY"))
+
+
+def has_key() -> bool:
+    return has_gemini() or has_deepseek()
+
+
+def provider() -> str:
+    """Which chat backend to use. Explicit JURY_PROVIDER wins; otherwise infer
+    from whichever key is present (DeepSeek preferred if both)."""
+    p = os.environ.get("JURY_PROVIDER", "").lower()
+    if p in ("deepseek", "gemini"):
+        return p
+    if has_deepseek():
+        return "deepseek"
+    return "gemini"
