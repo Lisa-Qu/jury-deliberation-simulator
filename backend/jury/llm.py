@@ -67,11 +67,13 @@ def lookup_evidence(query: str) -> str:
 class JuryLLM:
     """Real Gemini-backed LLM. Engine can swap in a fake for tests (duck-typed)."""
 
-    def __init__(self, retriever: EvidenceRetriever, model: str | None = None):
+    def __init__(self, retriever: EvidenceRetriever, model: str | None = None,
+                 lang: str = "en"):
         from langchain_google_genai import ChatGoogleGenerativeAI
 
         model = model or os.environ.get("JURY_MODEL", "gemini-1.5-flash")
         self.retriever = retriever
+        self.lang = lang
         self.creative = ChatGoogleGenerativeAI(model=model, temperature=0.85)
         self.precise = ChatGoogleGenerativeAI(model=model, temperature=0.3)
         self.tooled = self.creative.bind_tools([lookup_evidence])
@@ -98,8 +100,8 @@ class JuryLLM:
     # --- juror turn steps ------------------------------------------------- #
     def think(self, juror: JurorState, state: GameState, case: Case) -> str:
         def run():
-            msgs = [SystemMessage(prompts.persona_system(juror, case)),
-                    HumanMessage(prompts.think_prompt(juror, state, case))]
+            msgs = [SystemMessage(prompts.persona_system(juror, case, self.lang)),
+                    HumanMessage(prompts.think_prompt(juror, state, case, self.lang))]
             return self.precise.invoke(msgs).content.strip()
 
         return self._safe(run, fallback="(weighing the evidence...)", stage="think")
@@ -117,7 +119,7 @@ class JuryLLM:
         invoke → (model requests lookup_evidence → we retrieve & feed a
         ToolMessage back)* → grounded statement."""
         def run() -> tuple[str, Vote]:
-            msgs = [SystemMessage(prompts.persona_system(juror, case)),
+            msgs = [SystemMessage(prompts.persona_system(juror, case, self.lang)),
                     HumanMessage(human_prompt)]
             ai: AIMessage = self.tooled.invoke(msgs)
             hops = 0
@@ -139,19 +141,20 @@ class JuryLLM:
                           stage=stage)
 
     def speak(self, juror, state, case, on_tool_call, on_tool_result) -> tuple[str, Vote]:
-        return self._statement(juror, case, prompts.speak_prompt(juror, state, case),
+        return self._statement(juror, case,
+                               prompts.speak_prompt(juror, state, case, self.lang),
                                on_tool_call, on_tool_result, stage="speak")
 
     def respond(self, juror, state, case, target_name, target_text,
                 on_tool_call, on_tool_result) -> tuple[str, Vote]:
-        prompt = prompts.respond_prompt(juror, state, case, target_name, target_text)
+        prompt = prompts.respond_prompt(juror, state, case, target_name, target_text, self.lang)
         return self._statement(juror, case, prompt, on_tool_call, on_tool_result,
                                stage="respond")
 
     def revote(self, juror: JurorState, state: GameState, case: Case) -> tuple[Vote, str]:
         def run() -> tuple[Vote, str]:
-            msgs = [SystemMessage(prompts.persona_system(juror, case)),
-                    HumanMessage(prompts.vote_prompt(juror, state, case))]
+            msgs = [SystemMessage(prompts.persona_system(juror, case, self.lang)),
+                    HumanMessage(prompts.vote_prompt(juror, state, case, self.lang))]
             out = self.precise.invoke(msgs).content
             return parse_vote(out, juror.vote), extract_tag(out, "reason", "")
 
@@ -160,17 +163,29 @@ class JuryLLM:
     def hint(self, state: GameState, case: Case) -> str:
         def run():
             return self.precise.invoke(
-                [HumanMessage(prompts.hint_prompt(state, case))]
+                [HumanMessage(prompts.hint_prompt(state, case, self.lang))]
             ).content.strip()
 
         return self._safe(run, fallback="Consider whether the prosecution truly met "
                           "'beyond a reasonable doubt' — name one weak piece of evidence.",
                           stage="hint")
 
+    def judge(self, statement: str, case: Case) -> dict:
+        """CDA influence evaluator — score a statement's argument quality (0..1)
+        and flag fallacies. Off the visible path; feeds the belief-update engine."""
+        def run() -> dict:
+            out = self.precise.invoke(
+                [HumanMessage(prompts.judge_prompt(statement, case, self.lang))]
+            ).content
+            return {"quality": clamp_score(extract_tag(out, "quality"), 50) / 100.0,
+                    "fallacy": extract_tag(out, "fallacy", "none")}
+
+        return self._safe(run, fallback={"quality": 0.5, "fallacy": "none"}, stage="judge")
+
     def generate_personas(self, case: Case, n: int) -> list[dict]:
         def run() -> list[dict]:
             out = self.creative.invoke(
-                [HumanMessage(prompts.rolegen_prompt(case, n))]
+                [HumanMessage(prompts.rolegen_prompt(case, n, self.lang))]
             ).content
             block = re.search(r"\[.*\]", out, re.S)
             data = json.loads(block.group(0) if block else out)
@@ -181,7 +196,7 @@ class JuryLLM:
     def rubric(self, case: Case, human_lines: str, state: GameState) -> dict:
         def run() -> dict:
             out = self.precise.invoke(
-                [HumanMessage(prompts.rubric_prompt(case, human_lines, state))]
+                [HumanMessage(prompts.rubric_prompt(case, human_lines, state, self.lang))]
             ).content
             dims = {
                 "persuasiveness": clamp_score(extract_tag(out, "persuasiveness")),

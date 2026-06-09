@@ -34,6 +34,10 @@ class JurorStateDict(TypedDict):
     responding_score: float
     inner_reasoning: str
     is_human: bool
+    # CDA belief summary (None until JURY_BELIEFS is enabled) — for frontend viz.
+    opinion: Optional[float]          # signed scalar in [-1, 1]: +guilty / -not-guilty
+    conviction: Optional[float]       # magnitude of confidence in [0, 1]
+    belief_stance: Optional[str]
 
 
 # --------------------------------------------------------------------------- #
@@ -55,6 +59,52 @@ class Persona:
         )
 
 
+# --------------------------------------------------------------------------- #
+# CDA (Cognitive Deliberation Architecture) belief model — see jury/beliefs.py.
+# A Toulmin-structured argument and a layered belief held by one juror. All
+# immutable; the numpy belief-update engine returns new copies.
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class ToulminArg:
+    claim: str                  # the point being made
+    grounds: str                # the evidence/data behind it
+    warrant: str                # the (attackable) assumption linking grounds→claim
+    strength: float             # 0..1, how strongly this juror holds it
+
+
+UNDECIDED_BAND = 0.12   # |opinion| below this reads as UNDECIDED
+
+
+@dataclass(frozen=True)
+class BeliefStack:
+    # `opinion` is the persisted signed scalar in [-1, 1]: + guilty / - not guilty.
+    # stance & conviction are DERIVED so a small lean accumulates instead of being
+    # flattened to 0 (the bug a stance+conviction representation would hide).
+    opinion: float = 0.0
+    arguments: tuple[ToulminArg, ...] = ()  # supporting arguments (v1+; empty in v0)
+    epsilon: float = 0.6                    # bounded-confidence radius (openness)
+    identity_stake: float = 0.5             # stubbornness (identity-bound the stance is)
+    route_pref: float = 0.7                 # ELM: 1=central(quality) .. 0=peripheral(cue)
+
+    @property
+    def conviction(self) -> float:
+        return round(abs(self.opinion), 4)
+
+    @property
+    def stance(self) -> Vote:
+        if abs(self.opinion) < UNDECIDED_BAND:
+            return "UNDECIDED"
+        return "GUILTY" if self.opinion > 0 else "NOT_GUILTY"
+
+
+@dataclass(frozen=True)
+class ToMGuess:
+    opponent_id: str
+    est_opinion: float                      # my guess of their signed opinion [-1,1]
+    weakest_warrant: str = ""
+    est_epsilon: float = 0.6
+
+
 @dataclass(frozen=True)
 class JurorState:
     persona: Persona
@@ -63,12 +113,18 @@ class JurorState:
     responding_score: float     # propensity to react to others
     inner_reasoning: str = ""
     is_human: bool = False
+    beliefs: Optional[BeliefStack] = None   # None until JURY_BELIEFS is enabled
 
     @property
     def id(self) -> str:
         return self.persona.id
 
     def public(self) -> JurorStateDict:
+        opinion = conviction = belief_stance = None
+        if self.beliefs is not None:
+            opinion = round(self.beliefs.opinion, 3)
+            conviction = round(self.beliefs.conviction, 3)
+            belief_stance = self.beliefs.stance
         return JurorStateDict(
             persona=self.persona.public(),
             vote=self.vote,
@@ -76,6 +132,9 @@ class JurorState:
             responding_score=round(self.responding_score, 3),
             inner_reasoning=self.inner_reasoning,
             is_human=self.is_human,
+            opinion=opinion,
+            conviction=conviction,
+            belief_stance=belief_stance,
         )
 
 
@@ -113,6 +172,9 @@ class GameState:
     def update_juror(self, juror_id: str, **changes) -> "GameState":
         j = self.get_juror(juror_id)
         return self.replace_juror(juror_id, replace(j, **changes))
+
+    def update_beliefs(self, juror_id: str, beliefs: BeliefStack) -> "GameState":
+        return self.update_juror(juror_id, beliefs=beliefs)
 
     def add_entry(self, entry: TranscriptEntry) -> "GameState":
         return replace(self, transcript=self.transcript + (entry,))

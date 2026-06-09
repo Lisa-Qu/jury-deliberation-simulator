@@ -13,6 +13,7 @@ import os
 from dataclasses import replace
 from typing import Awaitable, Callable
 
+from . import beliefs as belief_engine
 from . import eval as evaluation
 from .cases import Case
 from .state import HUMAN_ID, GameState, JurorState, TranscriptEntry, Vote
@@ -25,6 +26,31 @@ STREAM_DELAY = float(os.environ.get("JURY_STREAM_DELAY", "0.35"))
 # A juror whose responding_score crosses this threshold gets to interject a
 # direct response to the previous speaker — score-gated interaction scheduling.
 RESPOND_THRESHOLD = float(os.environ.get("JURY_RESPOND_THRESHOLD", "0.6"))
+
+
+def _beliefs_on() -> bool:
+    # CDA belief loop is opt-in so default/legacy behavior is untouched.
+    return os.environ.get("JURY_BELIEFS", "").lower() in ("1", "true", "yes")
+
+
+async def _propagate_beliefs(state: GameState, case: Case, llm, emit: Emit,
+                             speaker_id: str, text: str) -> GameState:
+    """After a juror speaks, judge the statement (off the visible path — the
+    utterance already streamed out) and let the numpy belief engine update every
+    other juror. Emits `belief_update` events for the UI. No-op unless enabled."""
+    if state.get_juror(speaker_id).beliefs is None:
+        return state
+    jq = await asyncio.to_thread(llm.judge, text, case)
+    for ev in llm.drain_errors():
+        await emit(ev)
+    quality = float(jq.get("quality", 0.5))
+    state, changes = belief_engine.propagate(state, speaker_id, quality)
+    by = state.get_juror(speaker_id).persona.name
+    for jid, opinion, stance, delta in changes:
+        await emit({"type": "belief_update", "juror_id": jid, "opinion": opinion,
+                    "stance": stance, "delta": delta, "by": by,
+                    "quality": round(quality, 3)})
+    return state
 
 
 # --------------------------------------------------------------------------- #
@@ -114,6 +140,7 @@ async def _ai_phase(state: GameState, case: Case, llm, emit: Emit) -> GameState:
         state = state.add_entry(TranscriptEntry(
             new_j.id, new_j.persona.name, "speak", text, vote, state.round))
         state = _after_speaker(state, new_j.id)
+        state = await _propagate_beliefs(state, case, llm, emit, new_j.id, text)
     return state
 
 
@@ -138,7 +165,8 @@ async def _response_phase(state: GameState, case: Case, llm, emit: Emit) -> Game
     state = state.replace_juror(new_j.id, new_j)
     state = state.add_entry(TranscriptEntry(
         new_j.id, new_j.persona.name, "respond", text, vote, state.round))
-    return state.update_juror(new_j.id, responding_score=max(0.1, responder.responding_score * 0.5))
+    state = state.update_juror(new_j.id, responding_score=max(0.1, responder.responding_score * 0.5))
+    return await _propagate_beliefs(state, case, llm, emit, new_j.id, text)
 
 
 async def _human_phase(state, case, llm, emit, get_action) -> tuple[GameState, bool]:
@@ -181,12 +209,19 @@ async def _human_phase(state, case, llm, emit, get_action) -> tuple[GameState, b
 
 async def _closing_votes(state: GameState, case: Case, llm, emit: Emit) -> GameState:
     for j in state.ai_jurors:
-        vote, reason = await asyncio.to_thread(llm.revote, state.get_juror(j.id), state, case)
+        cur = state.get_juror(j.id)
+        if cur.beliefs is not None:
+            # belief-driven: the vote already tracks the belief stance — skip the
+            # extra revote LLM call (also a latency win), use the stance directly.
+            vote, reason = cur.beliefs.stance, "(belief-driven)"
+        else:
+            vote, reason = await asyncio.to_thread(llm.revote, cur, state, case)
         state = state.update_juror(j.id, vote=vote)
         await emit({"type": "vote", "juror_id": j.id, "name": j.persona.name,
                     "vote": vote, "reason": reason})
-        for ev in llm.drain_errors():
-            await emit(ev)
+        if cur.beliefs is None:
+            for ev in llm.drain_errors():
+                await emit(ev)
         await asyncio.sleep(STREAM_DELAY)
     return state
 
@@ -195,6 +230,8 @@ async def _closing_votes(state: GameState, case: Case, llm, emit: Emit) -> GameS
 # Main loop.
 # --------------------------------------------------------------------------- #
 async def run_game(state: GameState, case: Case, llm, emit: Emit, get_action: GetAction):
+    if _beliefs_on():
+        state = belief_engine.attach_initial(state)   # CDA opt-in belief model
     await emit({"type": "game_start", **state.public()})
 
     while not state.verdict_reached:

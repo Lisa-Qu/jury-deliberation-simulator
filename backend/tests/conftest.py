@@ -66,6 +66,9 @@ class FakeLLM:
     def generate_personas(self, case, n):
         return []
 
+    def judge(self, statement, case):
+        return {"quality": 0.8, "fallacy": "none"}
+
     def drain_errors(self):
         errs, self.errors = self.errors, []
         return errs
