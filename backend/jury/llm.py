@@ -140,9 +140,9 @@ class JuryLLM:
         return self._safe(run, fallback=("(I'll hold my position for now.)", juror.vote),
                           stage=stage)
 
-    def speak(self, juror, state, case, on_tool_call, on_tool_result) -> tuple[str, Vote]:
+    def speak(self, juror, state, case, on_tool_call, on_tool_result, move=None) -> tuple[str, Vote]:
         return self._statement(juror, case,
-                               prompts.speak_prompt(juror, state, case, self.lang),
+                               prompts.speak_prompt(juror, state, case, self.lang, move),
                                on_tool_call, on_tool_result, stage="speak")
 
     def respond(self, juror, state, case, target_name, target_text,
@@ -181,6 +181,18 @@ class JuryLLM:
                     "fallacy": extract_tag(out, "fallacy", "none")}
 
         return self._safe(run, fallback={"quality": 0.5, "fallacy": "none"}, stage="judge")
+
+    def tom_read(self, juror: JurorState, state: GameState, case: Case) -> list[dict]:
+        """CDA Theory of Mind — infer each opponent's mind from the transcript.
+        Returns a list of {opponent_id, est_opinion, weakest_point, est_openness}."""
+        def run() -> list[dict]:
+            out = self.precise.invoke(
+                [HumanMessage(prompts.tom_prompt(juror, state, case, self.lang))]
+            ).content
+            block = re.search(r"\[.*\]", out, re.S)
+            return json.loads(block.group(0) if block else out)
+
+        return self._safe(run, fallback=[], stage="tom")
 
     def generate_personas(self, case: Case, n: int) -> list[dict]:
         def run() -> list[dict]:

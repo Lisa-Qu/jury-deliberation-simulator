@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.5.0] - 2026-06-09
+### Features
+- **CDA v2 — agent Theory of Mind + targeted persuasion** (opt-in, `JURY_TOM=1`;
+  requires `JURY_BELIEFS=1`). Closes the v0 gap where the *speaking* side was generic.
+  - `jury/tom.py` (NEW): `update_tom(speaker, state, llm, case)` — per-opponent
+    `ToMGuess{est_opinion, weakest_point, est_openness}` (EMO-style distinct models);
+    LLM inference via `llm.tom_read` with a belief-state heuristic fallback (offline).
+  - `jury/strategy.py` (NEW): pure-Python `choose_move(speaker, guesses, state)` →
+    `Move{target_id, tactic, target_point}`. Targets the closest disagreeing (most
+    reachable) opponent; tactic follows the target's openness (ELM): open→`attack_weakest`,
+    closed→`common_ground`.
+  - `prompts.py`: `tom_prompt` + a `_targeting` directive appended to `speak_prompt`/
+    `respond_prompt` so the generated argument is actually aimed at the target's weak point.
+  - `tom_read()` added to the LLM contract (`JuryLLM`/`DeepSeekLLM`/`StubLLM`/`FakeLLM`);
+    `speak()` gains an optional `move`.
+  - `engine.py`: before each AI turn (when `JURY_TOM`), run ToM → `choose_move` →
+    emit a `strategy` event (`who → target, tactic`) → conditioned generation. ToM
+    guesses persist on `JurorState.tom`.
+  - Tests: `tests/test_strategy.py` (5) + `tests/test_engine_tom.py` (2). Full suite **41 passing**.
+### Design Rationale
+- **Prompt-only, inference-time** ToM/strategy (grounded in EMO NAACL-2025, "Infusing ToM"
+  2025, RebuttalAgent, DuET-PD). Fine-tuning / RL strategy optimization (ToMAP, OSCToM,
+  DebateQD) deliberately **deferred** — needs data/GPU, diminishing returns for a demo.
+- **Additive + gated** behind a separate `JURY_TOM` flag so v0's belief tests stay pure.
+- Models the **mechanism** of strategic persuasion (legible: you see "A targets C's alibi"),
+  not a claim of superhuman persuasion — empirical evidence that targeted > generic is mixed.
+### Notes & Caveats
+- ToM runs for the speaking agent each turn (~+1 small LLM call); make it every-K if tighter.
+- Response phase still targets the last speaker directly (no separate ToM there yet).
+
 ## [0.4.0] - 2026-06-09
 ### Features
 - **CDA belief engine (v0)** — opt-in psychologically-grounded persuasion model,

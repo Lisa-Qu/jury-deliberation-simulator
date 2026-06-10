@@ -15,6 +15,8 @@ from typing import Awaitable, Callable
 
 from . import beliefs as belief_engine
 from . import eval as evaluation
+from . import strategy
+from . import tom as tom_engine
 from .cases import Case
 from .state import HUMAN_ID, GameState, JurorState, TranscriptEntry, Vote
 
@@ -31,6 +33,11 @@ RESPOND_THRESHOLD = float(os.environ.get("JURY_RESPOND_THRESHOLD", "0.6"))
 def _beliefs_on() -> bool:
     # CDA belief loop is opt-in so default/legacy behavior is untouched.
     return os.environ.get("JURY_BELIEFS", "").lower() in ("1", "true", "yes")
+
+
+def _tom_on() -> bool:
+    # Theory-of-Mind + targeted persuasion (v2). Only meaningful with beliefs on.
+    return os.environ.get("JURY_TOM", "").lower() in ("1", "true", "yes")
 
 
 async def _propagate_beliefs(state: GameState, case: Case, llm, emit: Emit,
@@ -71,7 +78,7 @@ def _tool_events(juror: JurorState, collected: list) -> list[dict]:
     return evs
 
 
-def compute_juror_turn(juror: JurorState, state: GameState, case: Case, llm):
+def compute_juror_turn(juror: JurorState, state: GameState, case: Case, llm, move=None):
     name = juror.persona.name
     thought = llm.think(juror, state, case)
     events: list[dict] = [
@@ -82,6 +89,7 @@ def compute_juror_turn(juror: JurorState, state: GameState, case: Case, llm):
         juror, state, case,
         on_tool_call=lambda q: collected.append(("call", q)),
         on_tool_result=lambda h: collected.append(("result", h)),
+        move=move,
     )
     events.extend(_tool_events(juror, collected))
     events.append({"type": "speak", "juror_id": juror.id, "name": name,
@@ -130,8 +138,22 @@ async def _ai_phase(state: GameState, case: Case, llm, emit: Emit) -> GameState:
     order = sorted(state.ai_jurors, key=lambda j: -j.speaking_score)
     for j in order:
         juror = state.get_juror(j.id)
+        move = None
+        if _tom_on() and juror.beliefs is not None:
+            # Theory of Mind: the speaker reads opponents, then targets one.
+            guesses = await asyncio.to_thread(tom_engine.update_tom, juror, state, llm, case)
+            for ev in llm.drain_errors():
+                await emit(ev)
+            state = state.update_juror(juror.id, tom=guesses)
+            juror = state.get_juror(juror.id)
+            move = strategy.choose_move(juror, guesses, state)
+            if move.is_targeted:
+                await emit({"type": "strategy", "juror_id": juror.id, "name": juror.persona.name,
+                            "target_id": move.target_id,
+                            "target": state.get_juror(move.target_id).persona.name,
+                            "tactic": move.tactic, "target_point": move.target_point})
         events, new_j, text, vote = await asyncio.to_thread(
-            compute_juror_turn, juror, state, case, llm
+            compute_juror_turn, juror, state, case, llm, move
         )
         for ev in events:
             await emit(ev)

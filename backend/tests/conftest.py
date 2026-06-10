@@ -33,12 +33,15 @@ class FakeLLM:
     def think(self, juror, state, case):
         return f"{juror.persona.name} weighs the evidence."
 
-    def speak(self, juror, state, case, on_tool_call, on_tool_result):
+    def speak(self, juror, state, case, on_tool_call, on_tool_result, move=None):
         on_tool_call("evidence relevant to the charge")
         hits = self.retriever.lookup("evidence about the burglary", k=2)
         on_tool_result(hits)
         return (f"{juror.persona.name} argues from the retrieved evidence.",
                 self.forced_vote or juror.vote)
+
+    def tom_read(self, juror, state, case):
+        return []      # tests use the belief-state heuristic fallback in tom.py
 
     def respond(self, juror, state, case, target_name, target_text,
                 on_tool_call, on_tool_result):

@@ -47,6 +47,12 @@ export function JurorCard({ juror, active, t }: { juror: Juror; active: boolean;
           <Bar label={t.juror.responding} value={juror.responding_score} />
         </div>
       )}
+      {!juror.is_human && juror.opinion != null && (
+        <div className="mt-1 space-y-1 border-t border-stone-800 pt-1">
+          <Bar label={t.belief.lean} value={(juror.opinion + 1) / 2} />
+          <Bar label={t.belief.conviction} value={juror.conviction ?? 0} />
+        </div>
+      )}
       {active && juror.inner_reasoning && (
         <div className="mt-2 text-[11px] text-stone-300 bg-stone-800/80 rounded p-1.5 italic">
           💭 {juror.inner_reasoning}
@@ -94,6 +100,8 @@ const KIND_ICON: Record<string, string> = {
   hint: "💡",
   human: "🧑‍⚖️",
   error: "⚠️",
+  belief_update: "🧠",
+  strategy: "🎯",
 };
 
 export function TranscriptStream({ log, t }: { log: LogItem[]; t: T }) {
@@ -131,6 +139,19 @@ export function TranscriptStream({ log, t }: { log: LogItem[]; t: T }) {
             return (
               <div key={it.id} className="text-xs text-stone-500 italic pl-4">
                 💭 {it.name}: {it.text}
+              </div>
+            );
+          if (it.kind === "belief_update")
+            return (
+              <div key={it.id} className="text-xs text-purple-300 pl-4">
+                🧠 {it.name} → {it.stance} ({(it.delta ?? 0) >= 0 ? "+" : ""}{it.delta})
+              </div>
+            );
+          if (it.kind === "strategy")
+            return (
+              <div key={it.id} className="text-xs text-teal-300 pl-4">
+                🎯 {it.name} {t.strategy.targets} {it.target} · {t.strategy.tactic[it.tactic ?? "assert"] ?? it.tactic}
+                {it.targetPoint ? ` (${it.targetPoint})` : ""}
               </div>
             );
           return (

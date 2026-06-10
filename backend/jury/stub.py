@@ -94,11 +94,14 @@ class StubLLM:
         n, a = juror.persona.name, juror.persona.archetype
         return f"{n}（{a}）正在掂量手头的证据。" if self._zh else f"{n} ({a}) weighs the evidence at hand."
 
-    def speak(self, juror, state, case, on_tool_call, on_tool_result):
+    def speak(self, juror, state, case, on_tool_call, on_tool_result, move=None):
         L = self._lines(juror)
         on_tool_call(L["q_zh"] if self._zh else L["q_en"])
         on_tool_result(self.retriever.lookup(f'{L["q_zh"]} {L["q_en"]}', k=2))
         return (L["say_zh"] if self._zh else L["say_en"]), juror.vote
+
+    def tom_read(self, juror, state, case):
+        return []      # offline → tom.py falls back to the belief-state heuristic
 
     def respond(self, juror, state, case, target_name, target_text,
                 on_tool_call, on_tool_result):

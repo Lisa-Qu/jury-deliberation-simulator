@@ -40,6 +40,16 @@ const EN = {
     exit: "Exit",
   },
   juror: { bias: "bias", speaking: "speaking", responding: "responding" },
+  belief: { lean: "lean", conviction: "conviction" },
+  strategy: {
+    targets: "targets",
+    tactic: {
+      attack_weakest: "attack weak point",
+      common_ground: "common ground",
+      cite_authority: "cite authority",
+      assert: "assert",
+    } as Record<string, string>,
+  },
   verdictLabel: "Verdict",
   dims: {
     persuasiveness: "Persuasiveness",
@@ -89,6 +99,16 @@ const ZH: T = {
     exit: "退出",
   },
   juror: { bias: "偏见", speaking: "发言欲", responding: "回应欲" },
+  belief: { lean: "立场", conviction: "信心" },
+  strategy: {
+    targets: "针对",
+    tactic: {
+      attack_weakest: "攻击弱点",
+      common_ground: "寻找共识",
+      cite_authority: "引用权威",
+      assert: "陈述立场",
+    },
+  },
   verdictLabel: "裁决",
   dims: {
     persuasiveness: "说服力",

@@ -21,6 +21,29 @@ def render_transcript(state: GameState, last: int = 12) -> str:
     return "\n".join(f"[R{e.round}] {e.name} ({e.vote}): {e.text}" for e in rows)
 
 
+def _targeting(move, state, lang: str = "en") -> str:
+    """Append a CDA targeting directive to a generation prompt (JURY_TOM). Empty
+    string when there is no specific target."""
+    if move is None or not getattr(move, "target_id", ""):
+        return ""
+    from . import strategy
+    try:
+        name = state.get_juror(move.target_id).persona.name
+    except KeyError:
+        return ""
+    guide = strategy.tactic_text(move.tactic, lang)
+    pt = move.target_point
+    if lang == "zh":
+        s = f"\n\n【策略】你尤其想说服 {name}。"
+        if pt:
+            s += f"他最站不住的点：{pt}。"
+        return s + f"做法：{guide}。"
+    s = f"\n\n[STRATEGY] You especially want to move {name}."
+    if pt:
+        s += f" Their weakest point: {pt}."
+    return s + f" Approach: {guide}."
+
+
 def persona_system(juror: JurorState, case: Case, lang: str = "en") -> str:
     p = juror.persona
     if lang == "zh":
@@ -44,9 +67,10 @@ def persona_system(juror: JurorState, case: Case, lang: str = "en") -> str:
     )
 
 
-def speak_prompt(juror: JurorState, state: GameState, case: Case, lang: str = "en") -> str:
+def speak_prompt(juror: JurorState, state: GameState, case: Case, lang: str = "en",
+                 move=None) -> str:
     if lang == "zh":
-        return (
+        base = (
             f"目前的评议记录：\n{render_transcript(state)}\n\n"
             f"轮到你了（第 {state.round} 轮）。在断言任何有争议的事实之前，你可以调用 "
             f"`lookup_evidence` 工具从案卷中检索确切证据——只要你的论点依赖具体细节"
@@ -55,23 +79,26 @@ def speak_prompt(juror: JurorState, state: GameState, case: Case, lang: str = "e
             f"全程用中文发言。结尾必须有且仅有一个标签：<vote>{VOTE_VALUES}</vote>，"
             f"反映你当前的立场。"
         )
-    return (
-        f"Deliberation so far:\n{render_transcript(state)}\n\n"
-        f"It is your turn (round {state.round}). Before asserting any disputed FACT, "
-        f"you may call the `lookup_evidence` tool to pull the exact evidence from the "
-        f"case file — use it whenever your point depends on a specific detail "
-        f"(fingerprint, timeline, alibi, witness reliability, etc.). "
-        f"Then make ONE persuasive statement (2-4 sentences) to the other jurors, "
-        f"grounded in the evidence you retrieved.\n\n"
-        f"End your message with exactly one tag: <vote>{VOTE_VALUES}</vote> "
-        f"reflecting where you now stand."
-    )
+    else:
+        base = (
+            f"Deliberation so far:\n{render_transcript(state)}\n\n"
+            f"It is your turn (round {state.round}). Before asserting any disputed FACT, "
+            f"you may call the `lookup_evidence` tool to pull the exact evidence from the "
+            f"case file — use it whenever your point depends on a specific detail "
+            f"(fingerprint, timeline, alibi, witness reliability, etc.). "
+            f"Then make ONE persuasive statement (2-4 sentences) to the other jurors, "
+            f"grounded in the evidence you retrieved.\n\n"
+            f"End your message with exactly one tag: <vote>{VOTE_VALUES}</vote> "
+            f"reflecting where you now stand."
+        )
+    return base + _targeting(move, state, lang)
 
 
 def respond_prompt(juror: JurorState, state: GameState, case: Case,
-                   target_name: str, target_text: str, lang: str = "en") -> str:
+                   target_name: str, target_text: str, lang: str = "en",
+                   move=None) -> str:
     if lang == "zh":
-        return (
+        base = (
             f"目前的评议记录：\n{render_transcript(state)}\n\n"
             f"{target_name} 刚刚说：「{target_text}」\n\n"
             f"你忍不住要直接回应 {target_name}（第 {state.round} 轮）。在挑战或支持某个"
@@ -79,15 +106,17 @@ def respond_prompt(juror: JurorState, state: GameState, case: Case,
             f"一段有针对性的反应（2-3 句）——反驳、补强或使其复杂化。\n\n"
             f"全程用中文。结尾必须有且仅有一个标签：<vote>{VOTE_VALUES}</vote>。"
         )
-    return (
-        f"Deliberation so far:\n{render_transcript(state)}\n\n"
-        f"{target_name} just argued: \"{target_text}\"\n\n"
-        f"You feel compelled to RESPOND directly to {target_name} (round {state.round}). "
-        f"Before challenging or backing a disputed fact, you may call `lookup_evidence` "
-        f"to ground your reply in the case file. Then give ONE pointed reaction (2-3 "
-        f"sentences) — rebut, reinforce, or complicate their point.\n\n"
-        f"End with exactly one tag: <vote>{VOTE_VALUES}</vote>."
-    )
+    else:
+        base = (
+            f"Deliberation so far:\n{render_transcript(state)}\n\n"
+            f"{target_name} just argued: \"{target_text}\"\n\n"
+            f"You feel compelled to RESPOND directly to {target_name} (round {state.round}). "
+            f"Before challenging or backing a disputed fact, you may call `lookup_evidence` "
+            f"to ground your reply in the case file. Then give ONE pointed reaction (2-3 "
+            f"sentences) — rebut, reinforce, or complicate their point.\n\n"
+            f"End with exactly one tag: <vote>{VOTE_VALUES}</vote>."
+        )
+    return base + _targeting(move, state, lang)
 
 
 def think_prompt(juror: JurorState, state: GameState, case: Case, lang: str = "en") -> str:
@@ -158,6 +187,33 @@ def judge_prompt(statement: str, case: Case, lang: str = "en") -> str:
         f"Reply in exactly this format:\n"
         f"<quality>0-100: is it grounded in specific evidence, on-point, logically sound</quality>\n"
         f"<fallacy>name an obvious logical fallacy if present, else none</fallacy>"
+    )
+
+
+def tom_prompt(speaker: JurorState, state: GameState, case: Case, lang: str = "en") -> str:
+    """CDA Theory-of-Mind: ask the speaker to infer each opponent's mind from the
+    transcript. Output is structured JSON (consumed by jury/tom.py), never shown."""
+    others = [j for j in state.ai_jurors if j.id != speaker.id]
+    roster = ", ".join(f"{j.persona.id}={j.persona.name}" for j in others)
+    if lang == "zh":
+        return (
+            f"你是 {speaker.persona.name}。读评议记录，推测每个其他陪审员现在的心理。\n\n"
+            f"评议记录：\n{render_transcript(state)}\n\n"
+            f"其他陪审员：{roster}\n\n"
+            f"对每个人输出一个 JSON 对象放进数组，字段：\n"
+            f'{{"opponent_id": 编号, "est_opinion": -1到1(负=偏无罪,正=偏有罪), '
+            f'"weakest_point": 他论证里最站不住的一点, "est_openness": 0到1(越大越易被说服)}}\n'
+            f"只返回 JSON 数组。"
+        )
+    return (
+        f"You are {speaker.persona.name}. Read the deliberation and infer each other "
+        f"juror's current state of mind.\n\n"
+        f"Deliberation:\n{render_transcript(state)}\n\n"
+        f"Other jurors: {roster}\n\n"
+        f"For each, output one JSON object in an array with fields:\n"
+        f'{{"opponent_id": id, "est_opinion": -1..1 (neg=leans not-guilty, pos=guilty), '
+        f'"weakest_point": their least-defensible point, "est_openness": 0..1 (higher=easier to persuade)}}\n'
+        f"Return ONLY the JSON array."
     )
 
 

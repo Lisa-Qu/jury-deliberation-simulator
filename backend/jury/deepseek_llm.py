@@ -114,8 +114,8 @@ class DeepSeekLLM:
         return self._safe(run, fallback=("(I'll hold my position for now.)", juror.vote),
                           stage=stage)
 
-    def speak(self, juror, state, case, on_tool_call, on_tool_result):
-        return self._statement(juror, case, prompts.speak_prompt(juror, state, case, self.lang),
+    def speak(self, juror, state, case, on_tool_call, on_tool_result, move=None):
+        return self._statement(juror, case, prompts.speak_prompt(juror, state, case, self.lang, move),
                                on_tool_call, on_tool_result, stage="speak")
 
     def respond(self, juror, state, case, target_name, target_text,
@@ -151,6 +151,18 @@ class DeepSeekLLM:
                     "fallacy": extract_tag(out, "fallacy", "none")}
 
         return self._safe(run, fallback={"quality": 0.5, "fallacy": "none"}, stage="judge")
+
+    def tom_read(self, juror, state, case) -> list[dict]:
+        def run() -> list[dict]:
+            import re
+            out = self._chat(
+                [{"role": "user", "content": prompts.tom_prompt(juror, state, case, self.lang)}],
+                temperature=0.2,
+            ).choices[0].message.content or ""
+            block = re.search(r"\[.*\]", out, re.S)
+            return json.loads(block.group(0) if block else out)
+
+        return self._safe(run, fallback=[], stage="tom")
 
     def generate_personas(self, case, n) -> list[dict]:
         def run():

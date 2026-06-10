@@ -101,8 +101,8 @@ class BeliefStack:
 class ToMGuess:
     opponent_id: str
     est_opinion: float                      # my guess of their signed opinion [-1,1]
-    weakest_warrant: str = ""
-    est_epsilon: float = 0.6
+    weakest_point: str = ""                 # what they're least defensible on
+    est_openness: float = 0.6               # my guess of their bounded-confidence ε
 
 
 @dataclass(frozen=True)
@@ -114,6 +114,7 @@ class JurorState:
     inner_reasoning: str = ""
     is_human: bool = False
     beliefs: Optional[BeliefStack] = None   # None until JURY_BELIEFS is enabled
+    tom: tuple["ToMGuess", ...] = ()        # this juror's guesses about opponents (JURY_TOM)
 
     @property
     def id(self) -> str:

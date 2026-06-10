@@ -138,6 +138,34 @@ export function reduce(state: ViewState, ev: GameEvent): ViewState {
         scorecard: { verdict: ev.verdict ?? null, total: ev.total, dims: ev.dims, recap: ev.recap },
       };
 
+    case "belief_update":
+      return {
+        ...state,
+        log: push(state, {
+          kind: "belief_update",
+          jurorId: ev.juror_id,
+          name: ev.by,
+          stance: ev.stance,
+          delta: ev.delta,
+          opinion: ev.opinion,
+          quality: ev.quality,
+        }),
+      };
+
+    case "strategy":
+      return {
+        ...state,
+        log: push(state, {
+          kind: "strategy",
+          jurorId: ev.juror_id,
+          name: ev.name,
+          targetId: ev.target_id,
+          target: ev.target,
+          tactic: ev.tactic,
+          targetPoint: ev.target_point,
+        }),
+      };
+
     case "done":
       return { ...state, finished: true, awaitingHuman: false, activeJurorId: null };
 

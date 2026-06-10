@@ -16,6 +16,10 @@ export interface Juror {
   responding_score: number;
   inner_reasoning: string;
   is_human: boolean;
+  // CDA belief summary (null unless JURY_BELIEFS is on)
+  opinion?: number | null; // signed [-1,1]: +guilty / -not-guilty
+  conviction?: number | null; // magnitude [0,1]
+  belief_stance?: string | null;
 }
 
 export interface CaseInfo {
@@ -45,7 +49,9 @@ export interface LogItem {
     | "vote"
     | "hint"
     | "human"
-    | "error";
+    | "error"
+    | "belief_update"
+    | "strategy";
   jurorId?: string;
   name?: string;
   text?: string;
@@ -54,6 +60,15 @@ export interface LogItem {
   evidenceIds?: number[];
   reason?: string;
   round?: number;
+  // belief_update / strategy payloads
+  opinion?: number;
+  stance?: string;
+  delta?: number;
+  quality?: number;
+  target?: string;
+  targetId?: string;
+  tactic?: string;
+  targetPoint?: string;
 }
 
 export interface ViewState {
