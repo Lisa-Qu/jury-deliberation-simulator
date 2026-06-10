@@ -14,7 +14,7 @@ round, and an **LLM-as-a-Judge** grades your participation at the end.
 ![React](https://img.shields.io/badge/React-Vite%20%2B%20TS-61DAFB?logo=react&logoColor=black)
 ![Gemini](https://img.shields.io/badge/Gemini-1.5%20Flash-8E75B2?logo=googlegemini&logoColor=white)
 ![LangChain](https://img.shields.io/badge/LangChain-bind__tools-1C3C3C?logo=langchain&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-24%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-58%20passing-2ea44f)
 
 ---
 
@@ -32,6 +32,10 @@ round, and an **LLM-as-a-Judge** grades your participation at the end.
   a flaky API never crashes the game.
 - **Live streaming UI** — FastAPI **SSE** backend, **React + Vite** front-end with
   juror cards, evidence highlighting, vote tally, and the ReAct trace.
+- **CDA belief engine (opt-in)** — psychologically-grounded belief change
+  (bounded-confidence + ELM + cognitive dissonance), agent **Theory of Mind** +
+  targeted persuasion, true **token streaming**, and live belief/strategy/metrics
+  in the UI. See [CDA](#-cda--cognitive-deliberation-architecture-opt-in).
 
 ## 🧱 Architecture
 
@@ -142,6 +146,63 @@ sequenceDiagram
     ENG->>ENG: emit speak · update transcript & scores
     Note over ENG,RAG: Every LLM call is wrapped in retry + parse-fallback — failures surface as error events and never crash the game
 ```
+
+## 🧠 CDA — Cognitive Deliberation Architecture (opt-in)
+
+By default jurors argue from generic prompts. Flip on the **CDA** layer and belief
+change becomes **psychologically grounded, traceable, and controllable**: each juror
+holds a structured belief, **reads its opponents (Theory of Mind)**, and aims its
+argument at the most persuadable one. Every piece is **additive + flag-gated**, so
+the default path (and the test suite) is untouched.
+
+### A statement must pass four gates to move a listener
+`jury/beliefs.py` — pure numpy, deterministic, no LLM:
+
+```mermaid
+flowchart LR
+    S["🗣️ statement<br/>speaker opinion + judge quality q"] --> G1{"① distance<br/>dist ≤ ε ?"}
+    G1 -- "no (too far)" --> X["🚫 ignored<br/>(motivated reasoning)"]
+    G1 -- "yes" --> G2["② route — ELM<br/>central: weight quality<br/>peripheral: weight credibility"]
+    G2 --> G3["③ quality<br/>scale pull by q"]
+    G3 --> G4["④ identity<br/>high stake → damp (no boomerang)"]
+    G4 --> M["📈 opinion shifts<br/>may cross 0 → vote flips"]
+    classDef gate fill:#fff7ed,stroke:#f59e0b,color:#92400e;
+    class G1,G2,G3,G4 gate;
+```
+
+Grounded in **bounded-confidence opinion dynamics**, the **Elaboration Likelihood
+Model**, and **cognitive dissonance / motivated reasoning** — high-identity beliefs
+*resist* rather than reverse (no backfire effect, per PNAS 2019). Opinion is a signed
+scalar in `[-1, 1]`; a pull that drags it across zero flips the stance.
+
+### Theory of Mind + targeted persuasion
+Before speaking, each juror **infers** every opponent's lean, weakest point, and
+openness (`jury/tom.py`, via the model — a genuine guess with information asymmetry,
+not a peek at the truth). Then `jury/strategy.py` picks **who to move** (the closest
+disagreer) and **how** — open target → attack the weak point with evidence; closed →
+find common ground first (ELM-matched). The chosen move conditions the spoken
+argument, and a `strategy` event (*"Marian → targets Priya · attack_weakest"*) streams
+to the UI.
+
+### Flags
+| Env var | Turns on |
+|---|---|
+| `JURY_BELIEFS=1` | belief stack + 4-gate updates + belief-aware speaking order + belief-driven votes |
+| `JURY_TOM=1` | Theory-of-Mind reads + targeted persuasion + Toulmin arguments (requires BELIEFS) |
+| `JURY_STREAM=1` | true token streaming of utterances (`speak_delta`) via RAG pre-fetch |
+| `JURY_REFLECT=1` | periodic one-line self-reflection |
+| `JURY_FAST_MODEL=…` | cheap model tier for judge / ToM / args / reflection |
+
+Demo the full stack: `JURY_BELIEFS=1 JURY_TOM=1 JURY_STREAM=1 JURY_REFLECT=1 uvicorn server:app`.
+
+### Modules (all additive)
+| File | Role |
+|---|---|
+| `jury/beliefs.py` | 4-gate belief-update engine (pure numpy) |
+| `jury/tom.py` | per-opponent Theory-of-Mind inference |
+| `jury/strategy.py` | target + tactic selection (pure Python) |
+| `jury/scheduler.py` | belief-aware drive speaking order |
+| `jury/metrics.py` | convergence · polarization · who-convinced-whom |
 
 ## 🚀 Run it (local, live Gemini)
 
