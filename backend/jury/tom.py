@@ -1,13 +1,14 @@
 """Theory of Mind (ToM) — a speaker's per-opponent model of the others' minds.
 
 Before an agent speaks, it estimates, for each opponent: their current lean
-(`est_opinion`), the point they're weakest on (`est_weakest_point`), and how open
-they are (`est_openness`). Following the EMO pattern, each opponent is modeled as a
-DISTINCT entity (not a monolithic "other").
+(`est_opinion`), the point they're weakest on (`weakest_point`), and how open they
+are (`est_openness`). Following the EMO pattern, each opponent is a DISTINCT model.
 
-`update_tom` prefers a real LLM inference from the transcript (`llm.tom_read`); if
-that's unavailable/empty (offline stub, error) it falls back to a cheap heuristic
-that reads opponents' actual belief state — approximate but keeps the loop running.
+This is a GENUINE inference: it asks the LLM (`llm.tom_read`) to read the transcript
+and guess. No omniscient shortcut — if the model returns nothing (error / offline
+stub provides its own), the speaker simply has no read this turn and falls back to a
+generic, untargeted statement. (Offline runs get their guesses from the stub's
+`tom_read`, which stands in for the model like everything else in stub mode.)
 """
 from __future__ import annotations
 
@@ -15,33 +16,16 @@ from .cases import Case
 from .state import GameState, JurorState, ToMGuess
 
 
-def _weakest(b) -> str:
-    """The warrant of the opponent's lowest-strength argument (their soft spot)."""
-    if b.arguments:
-        return min(b.arguments, key=lambda a: a.strength).warrant
-    return ""
-
-
-def _heuristic(speaker: JurorState, state: GameState) -> tuple[ToMGuess, ...]:
-    """LLM-free fallback: approximate each opponent from their belief stack."""
-    out = []
-    for j in state.ai_jurors:
-        if j.id == speaker.id or j.beliefs is None:
-            continue
-        out.append(ToMGuess(opponent_id=j.id, est_opinion=j.beliefs.opinion,
-                            weakest_point=_weakest(j.beliefs), est_openness=j.beliefs.epsilon))
-    return tuple(out)
+def _clamp(x: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, x))
 
 
 def update_tom(speaker: JurorState, state: GameState, llm, case: Case) -> tuple[ToMGuess, ...]:
-    """Return the speaker's ToM guesses about every other AI juror."""
-    if speaker.beliefs is None:
+    """Return the speaker's ToM guesses about every other AI juror, inferred by the
+    LLM. Empty tuple when there's no read (no tom_read / error / nothing returned)."""
+    if speaker.beliefs is None or not hasattr(llm, "tom_read"):
         return ()
-    raw = []
-    if hasattr(llm, "tom_read"):
-        raw = llm.tom_read(speaker, state, case) or []
-    if not raw:
-        return _heuristic(speaker, state)
+    raw = llm.tom_read(speaker, state, case) or []
     valid = {j.id for j in state.ai_jurors if j.id != speaker.id}
     guesses = []
     for r in raw:
@@ -50,8 +34,8 @@ def update_tom(speaker: JurorState, state: GameState, llm, case: Case) -> tuple[
             continue
         guesses.append(ToMGuess(
             opponent_id=oid,
-            est_opinion=max(-1.0, min(1.0, float(r.get("est_opinion", 0.0)))),
+            est_opinion=_clamp(float(r.get("est_opinion", 0.0)), -1.0, 1.0),
             weakest_point=str(r.get("weakest_point", "")),
-            est_openness=max(0.0, min(1.0, float(r.get("est_openness", 0.6)))),
+            est_openness=_clamp(float(r.get("est_openness", 0.6)), 0.0, 1.0),
         ))
-    return tuple(guesses) if guesses else _heuristic(speaker, state)
+    return tuple(guesses)

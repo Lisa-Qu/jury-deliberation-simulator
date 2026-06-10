@@ -101,7 +101,17 @@ class StubLLM:
         return (L["say_zh"] if self._zh else L["say_en"]), juror.vote
 
     def tom_read(self, juror, state, case):
-        return []      # offline → tom.py falls back to the belief-state heuristic
+        # Offline stand-in for the model's read: derive guesses from opponents'
+        # belief state (the stub is fake by design — real runs infer via the LLM).
+        out = []
+        for j in state.ai_jurors:
+            if j.id == juror.id or j.beliefs is None:
+                continue
+            weak = (min(j.beliefs.arguments, key=lambda a: a.strength).warrant
+                    if j.beliefs.arguments else "")
+            out.append({"opponent_id": j.id, "est_opinion": j.beliefs.opinion,
+                        "weakest_point": weak, "est_openness": j.beliefs.epsilon})
+        return out
 
     def extract_arguments(self, juror, case):
         return []      # offline → arguments stay empty (opinion scalar carries state)
