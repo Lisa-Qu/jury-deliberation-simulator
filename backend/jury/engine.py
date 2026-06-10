@@ -20,6 +20,7 @@ from . import scheduler
 from . import strategy
 from . import tom as tom_engine
 from .cases import Case
+from .llm import clean_statement, parse_vote
 from .state import HUMAN_ID, GameState, JurorState, TranscriptEntry, Vote
 
 Emit = Callable[[dict], Awaitable[None]]
@@ -161,6 +162,70 @@ def _after_speaker(state: GameState, speaker_id: str) -> GameState:
 # --------------------------------------------------------------------------- #
 # Phases.
 # --------------------------------------------------------------------------- #
+async def _stream_ai_turn(state: GameState, juror: JurorState, move, case: Case,
+                          llm, emit: Emit) -> GameState:
+    """One AI speaking turn with TRUE token streaming. Runs the blocking
+    `llm.stream_speak` generator in a thread and bridges its output to async SSE
+    emits (tool_call/tool_result, then speak_start/speak_delta*/speak_end)."""
+    import queue as _queue
+
+    name = juror.persona.name
+    thought = await asyncio.to_thread(llm.think, juror, state, case)
+    await emit({"type": "thinking", "juror_id": juror.id, "name": name, "text": thought})
+
+    q: "_queue.Queue" = _queue.Queue()
+
+    def worker() -> None:
+        try:
+            for tok in llm.stream_speak(juror, state, case, move,
+                                        on_tool_call=lambda x: q.put(("call", x)),
+                                        on_tool_result=lambda h: q.put(("result", h))):
+                q.put(("tok", tok))
+        except Exception as e:  # noqa: BLE001 — degrade, never crash the game
+            q.put(("err", str(e)[:200]))
+        q.put(("done", None))
+
+    loop = asyncio.get_event_loop()
+    fut = loop.run_in_executor(None, worker)
+    full: list[str] = []
+    started = False
+    while True:
+        kind, val = await loop.run_in_executor(None, q.get)
+        if kind == "call":
+            await emit({"type": "tool_call", "juror_id": juror.id, "name": name,
+                        "tool": "lookup_evidence", "query": val})
+        elif kind == "result":
+            await emit({"type": "tool_result", "juror_id": juror.id, "name": name,
+                        "evidence_ids": val.ids, "snippets": val.snippets,
+                        "scores": [round(s, 3) for s in val.scores]})
+        elif kind == "tok":
+            if not started:
+                await emit({"type": "speak_start", "juror_id": juror.id, "name": name})
+                started = True
+            full.append(val)
+            await emit({"type": "speak_delta", "juror_id": juror.id, "text": val})
+        elif kind == "err":
+            await emit({"type": "error", "stage": "stream", "message": val, "recovered": True})
+        elif kind == "done":
+            break
+    await fut
+
+    raw = "".join(full)
+    text = clean_statement(raw) or "(I'll hold my position for now.)"
+    vote = parse_vote(raw, juror.vote)
+    if not started:
+        await emit({"type": "speak_start", "juror_id": juror.id, "name": name})
+    await emit({"type": "speak_end", "juror_id": juror.id, "name": name, "text": text, "vote": vote})
+    for ev in llm.drain_errors():
+        await emit(ev)
+
+    new_j = replace(juror, vote=vote, inner_reasoning=thought)
+    state = state.replace_juror(new_j.id, new_j)
+    state = state.add_entry(TranscriptEntry(new_j.id, name, "speak", text, vote, state.round))
+    state = _after_speaker(state, new_j.id)
+    return await _propagate_beliefs(state, case, llm, emit, new_j.id, text)
+
+
 async def _ai_phase(state: GameState, case: Case, llm, emit: Emit) -> GameState:
     # belief-aware drive scheduler when beliefs on; else legacy speaking_score sort
     order = (scheduler.speaking_order(state) if _beliefs_on()
@@ -181,6 +246,10 @@ async def _ai_phase(state: GameState, case: Case, llm, emit: Emit) -> GameState:
                             "target_id": move.target_id,
                             "target": state.get_juror(move.target_id).persona.name,
                             "tactic": move.tactic, "target_point": move.target_point})
+        if _stream_on() and hasattr(llm, "stream_speak"):
+            # TRUE token streaming (real LLM): emit speak_delta as tokens arrive.
+            state = await _stream_ai_turn(state, juror, move, case, llm, emit)
+            continue
         events, new_j, text, vote = await asyncio.to_thread(
             compute_juror_turn, juror, state, case, llm, move
         )

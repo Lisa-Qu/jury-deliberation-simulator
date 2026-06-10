@@ -40,6 +40,12 @@ class FakeLLM:
         return (f"{juror.persona.name} argues from the retrieved evidence.",
                 self.forced_vote or juror.vote)
 
+    def stream_speak(self, juror, state, case, move, on_tool_call, on_tool_result):
+        on_tool_call("evidence relevant to the charge")
+        on_tool_result(self.retriever.lookup("evidence about the burglary", k=2))
+        for w in f"{juror.persona.name} argues from the retrieved evidence.".split(" "):
+            yield w + " "
+
     def tom_read(self, juror, state, case):
         return []      # tests use the belief-state heuristic fallback in tom.py
 

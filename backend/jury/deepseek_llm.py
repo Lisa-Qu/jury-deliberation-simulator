@@ -17,7 +17,7 @@ from typing import Callable
 
 from . import prompts
 from .cases import Case
-from .llm import clean_statement, clamp_score, extract_tag, parse_vote
+from .llm import clean_statement, clamp_score, extract_tag, parse_vote, prefetch_query
 from .rag import EvidenceRetriever, Hits
 from .state import GameState, JurorState, Vote
 
@@ -122,6 +122,27 @@ class DeepSeekLLM:
                 on_tool_call, on_tool_result, move=None):
         prompt = prompts.respond_prompt(juror, state, case, target_name, target_text, self.lang, move)
         return self._statement(juror, case, prompt, on_tool_call, on_tool_result, stage="respond")
+
+    def stream_speak(self, juror, state, case, move, on_tool_call, on_tool_result):
+        """TRUE low-latency token streaming. Instead of a model-driven ReAct loop
+        (2-3 round-trips before any token), RAG-PRE-FETCH the evidence with a numpy
+        lookup (instant) and inject it, so only ONE streamed call stands between the
+        user and the first token. Yields text chunks."""
+        query = prefetch_query(juror, move, case)
+        on_tool_call(query)
+        hits = self.retriever.lookup(query)
+        on_tool_result(hits)
+        user = (prompts.speak_prompt(juror, state, case, self.lang, move)
+                + "\n\nRetrieved evidence:\n" + hits.as_text())
+        stream = self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "system", "content": prompts.persona_system(juror, case, self.lang)},
+                      {"role": "user", "content": user}],
+            temperature=0.85, stream=True)
+        for ch in stream:
+            piece = ch.choices[0].delta.content or ""
+            if piece:
+                yield piece
 
     def revote(self, juror, state, case) -> tuple[Vote, str]:
         def run():

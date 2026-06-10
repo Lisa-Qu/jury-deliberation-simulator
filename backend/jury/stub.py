@@ -109,6 +109,14 @@ class StubLLM:
     def reflect(self, juror, state, case):
         return juror.inner_reasoning or self.think(juror, state, case)
 
+    def stream_speak(self, juror, state, case, move, on_tool_call, on_tool_result):
+        L = self._lines(juror)
+        on_tool_call(L["q_zh"] if self._zh else L["q_en"])
+        on_tool_result(self.retriever.lookup(f'{L["q_zh"]} {L["q_en"]}', k=2))
+        line = L["say_zh"] if self._zh else L["say_en"]
+        for w in line.split(" "):
+            yield w + " "
+
     def respond(self, juror, state, case, target_name, target_text,
                 on_tool_call, on_tool_result, move=None):
         L = self._lines(juror)

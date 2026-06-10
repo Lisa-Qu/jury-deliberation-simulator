@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.6.1] - 2026-06-09
+### Features
+- **TRUE token streaming** (`JURY_STREAM`, replaces the v1 chunked replay): new
+  `stream_speak` on `JuryLLM` (Gemini `creative.stream`) + `DeepSeekLLM`
+  (`stream=True`). `engine._stream_ai_turn` bridges the blocking generator to async
+  SSE via a thread + queue, emitting `speak_delta` as tokens arrive.
+- **RAG pre-fetch on the streaming path**: instead of a model-driven ReAct loop
+  (2-3 round-trips before any token), `prefetch_query` does an instant numpy lookup
+  and injects evidence → only ONE streamed call before the first token.
+- `StubLLM`/`FakeLLM` get a word-by-word `stream_speak` so the bridge is exercised
+  offline + in CI.
+### Verification (measured against live DeepSeek)
+- Raw API stream: 62 chunks, first token 0.97s. Full engine turn: **time-to-first
+  `speak_delta` 9.2s → 2.4s** after the RAG-pre-fetch refactor (remaining ~1.6s is
+  the `think` call; parallelizing it is a further option). 56 tests pass.
+### Notes
+- Engine falls back to chunked replay when the LLM has no `stream_speak`.
+
 ## [0.6.0] - 2026-06-09
 ### Features — completes the remaining CDA roadmap (all additive + flag-gated)
 - **Frontend visibility**: juror cards show an **opinion (lean) + conviction bar**; the

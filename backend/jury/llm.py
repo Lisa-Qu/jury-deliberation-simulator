@@ -52,6 +52,13 @@ def clamp_score(raw: str, default: int = 60) -> int:
         return default
 
 
+def prefetch_query(juror, move, case) -> str:
+    """Heuristic RAG query for low-latency streaming pre-fetch (no model round-trip):
+    aim at the target's weak point if known, else the juror's bias, else the charge."""
+    tp = getattr(move, "target_point", "") if move else ""
+    return (tp or juror.persona.bias or case.charge or "case evidence").strip()
+
+
 # --------------------------------------------------------------------------- #
 # The lookup tool schema (body unused — we execute retrieval manually so we can
 # emit tool_call / tool_result events; binding only declares the schema).
@@ -153,6 +160,23 @@ class JuryLLM:
         prompt = prompts.respond_prompt(juror, state, case, target_name, target_text, self.lang, move)
         return self._statement(juror, case, prompt, on_tool_call, on_tool_result,
                                stage="respond")
+
+    def stream_speak(self, juror, state, case, move, on_tool_call, on_tool_result):
+        """TRUE low-latency token streaming (Gemini): RAG-PRE-FETCH evidence with a
+        numpy lookup (instant), inject it, then ONE streamed call — so the first
+        token reaches the user without waiting on a model-driven tool loop."""
+        query = prefetch_query(juror, move, case)
+        on_tool_call(query)
+        hits = self.retriever.lookup(query)
+        on_tool_result(hits)
+        user = (prompts.speak_prompt(juror, state, case, self.lang, move)
+                + "\n\nRetrieved evidence:\n" + hits.as_text())
+        msgs = [SystemMessage(prompts.persona_system(juror, case, self.lang)),
+                HumanMessage(user)]
+        for chunk in self.creative.stream(msgs):
+            piece = chunk.content if isinstance(chunk.content, str) else ""
+            if piece:
+                yield piece
 
     def revote(self, juror: JurorState, state: GameState, case: Case) -> tuple[Vote, str]:
         def run() -> tuple[Vote, str]:
