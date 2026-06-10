@@ -94,6 +94,31 @@ export function reduce(state: ViewState, ev: GameEvent): ViewState {
         }),
       };
 
+    case "speak_start":
+      return {
+        ...state,
+        activeJurorId: ev.juror_id,
+        log: push(state, { kind: "speak", jurorId: ev.juror_id, name: ev.name, text: "" }),
+      };
+
+    case "speak_delta": {
+      const log = state.log.slice();
+      const last = log[log.length - 1];
+      if (last && last.kind === "speak") {
+        log[log.length - 1] = { ...last, text: (last.text || "") + (ev.text || "") };
+      }
+      return { ...state, log };
+    }
+
+    case "speak_end": {
+      const log = state.log.slice();
+      const last = log[log.length - 1];
+      if (last && last.kind === "speak") {
+        log[log.length - 1] = { ...last, text: ev.text ?? last.text, vote: ev.vote };
+      }
+      return { ...state, jurors: setVote(state.jurors, ev.juror_id, ev.vote), log };
+    }
+
     case "awaiting_human":
       return {
         ...state,
@@ -163,6 +188,23 @@ export function reduce(state: ViewState, ev: GameEvent): ViewState {
           target: ev.target,
           tactic: ev.tactic,
           targetPoint: ev.target_point,
+        }),
+      };
+
+    case "reflection":
+      return {
+        ...state,
+        log: push(state, { kind: "reflection", jurorId: ev.juror_id, name: ev.name, text: ev.text }),
+      };
+
+    case "metrics":
+      return {
+        ...state,
+        log: push(state, {
+          kind: "metrics",
+          convergence: ev.convergence,
+          polarization: ev.polarization,
+          topInfluencer: ev.top_influencer,
         }),
       };
 

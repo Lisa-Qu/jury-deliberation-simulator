@@ -15,6 +15,8 @@ from typing import Awaitable, Callable
 
 from . import beliefs as belief_engine
 from . import eval as evaluation
+from . import metrics
+from . import scheduler
 from . import strategy
 from . import tom as tom_engine
 from .cases import Case
@@ -38,6 +40,30 @@ def _beliefs_on() -> bool:
 def _tom_on() -> bool:
     # Theory-of-Mind + targeted persuasion (v2). Only meaningful with beliefs on.
     return os.environ.get("JURY_TOM", "").lower() in ("1", "true", "yes")
+
+
+def _stream_on() -> bool:
+    # Token-style streaming of utterances over SSE (chunked replay in v1).
+    return os.environ.get("JURY_STREAM", "").lower() in ("1", "true", "yes")
+
+
+def _reflect_on() -> bool:
+    return os.environ.get("JURY_REFLECT", "").lower() in ("1", "true", "yes")
+
+
+async def _emit_event(emit: Emit, ev: dict) -> None:
+    """Stream `speak` events as speak_start / speak_delta* / speak_end when
+    JURY_STREAM is on (so the UI renders words as they arrive); pass everything
+    else through unchanged. v1 chunks the already-computed text (not true
+    token-level TTFT streaming — that's a later swap of the chunk source)."""
+    if not (_stream_on() and ev.get("type") == "speak"):
+        await emit(ev)
+        return
+    head = {k: ev.get(k) for k in ("juror_id", "name", "responding_to")}
+    await emit({"type": "speak_start", **head})
+    for word in (ev.get("text") or "").split(" "):
+        await emit({"type": "speak_delta", "juror_id": ev.get("juror_id"), "text": word + " "})
+    await emit({"type": "speak_end", **head, "vote": ev.get("vote"), "text": ev.get("text")})
 
 
 async def _propagate_beliefs(state: GameState, case: Case, llm, emit: Emit,
@@ -99,7 +125,7 @@ def compute_juror_turn(juror: JurorState, state: GameState, case: Case, llm, mov
 
 
 def compute_respond_turn(juror: JurorState, target_name: str, target_text: str,
-                         state: GameState, case: Case, llm):
+                         state: GameState, case: Case, llm, move=None):
     name = juror.persona.name
     thought = llm.think(juror, state, case)
     events: list[dict] = [
@@ -110,6 +136,7 @@ def compute_respond_turn(juror: JurorState, target_name: str, target_text: str,
         juror, state, case, target_name, target_text,
         on_tool_call=lambda q: collected.append(("call", q)),
         on_tool_result=lambda h: collected.append(("result", h)),
+        move=move,
     )
     events.extend(_tool_events(juror, collected))
     events.append({"type": "speak", "juror_id": juror.id, "name": name,
@@ -135,7 +162,9 @@ def _after_speaker(state: GameState, speaker_id: str) -> GameState:
 # Phases.
 # --------------------------------------------------------------------------- #
 async def _ai_phase(state: GameState, case: Case, llm, emit: Emit) -> GameState:
-    order = sorted(state.ai_jurors, key=lambda j: -j.speaking_score)
+    # belief-aware drive scheduler when beliefs on; else legacy speaking_score sort
+    order = (scheduler.speaking_order(state) if _beliefs_on()
+             else sorted(state.ai_jurors, key=lambda j: -j.speaking_score))
     for j in order:
         juror = state.get_juror(j.id)
         move = None
@@ -156,7 +185,7 @@ async def _ai_phase(state: GameState, case: Case, llm, emit: Emit) -> GameState:
             compute_juror_turn, juror, state, case, llm, move
         )
         for ev in events:
-            await emit(ev)
+            await _emit_event(emit, ev)
             await asyncio.sleep(STREAM_DELAY)
         state = state.replace_juror(new_j.id, new_j)
         state = state.add_entry(TranscriptEntry(
@@ -178,11 +207,23 @@ async def _response_phase(state: GameState, case: Case, llm, emit: Emit) -> Game
     if not eligible:
         return state
     responder = max(eligible, key=lambda j: j.responding_score)
+    move = None
+    if _tom_on() and state.get_juror(responder.id).beliefs is not None:
+        guesses = await asyncio.to_thread(
+            tom_engine.update_tom, state.get_juror(responder.id), state, llm, case)
+        for ev in llm.drain_errors():
+            await emit(ev)
+        state = state.update_juror(responder.id, tom=guesses)
+        move = strategy.move_against(last.juror_id, guesses)   # reply targets the last speaker
+        await emit({"type": "strategy", "juror_id": responder.id,
+                    "name": responder.persona.name, "target_id": last.juror_id,
+                    "target": last.name, "tactic": move.tactic,
+                    "target_point": move.target_point})
     events, new_j, text, vote = await asyncio.to_thread(
         compute_respond_turn, state.get_juror(responder.id),
-        last.name, last.text, state, case, llm)
+        last.name, last.text, state, case, llm, move)
     for ev in events:
-        await emit(ev)
+        await _emit_event(emit, ev)
         await asyncio.sleep(STREAM_DELAY)
     state = state.replace_juror(new_j.id, new_j)
     state = state.add_entry(TranscriptEntry(
@@ -252,12 +293,33 @@ async def _closing_votes(state: GameState, case: Case, llm, emit: Emit) -> GameS
 # Main loop.
 # --------------------------------------------------------------------------- #
 async def run_game(state: GameState, case: Case, llm, emit: Emit, get_action: GetAction):
+    belief_updates: list[dict] = []
     if _beliefs_on():
         state = belief_engine.attach_initial(state)   # CDA opt-in belief model
+        if _tom_on():
+            # Toulmin arguments per juror (feeds ToM weakest-point). Offline → empty → no-op.
+            for j in state.ai_jurors:
+                raw = await asyncio.to_thread(llm.extract_arguments, j, case)
+                if raw:
+                    state = state.update_beliefs(j.id, belief_engine.set_arguments(j.beliefs, raw))
+        base_emit = emit
+
+        async def emit(ev: dict) -> None:             # capture belief_update for metrics
+            if ev.get("type") == "belief_update":
+                belief_updates.append(ev)
+            await base_emit(ev)
+
     await emit({"type": "game_start", **state.public()})
 
     while not state.verdict_reached:
         await emit({"type": "round_start", "round": state.round})
+        if _reflect_on():
+            for j in state.ai_jurors:
+                r = await asyncio.to_thread(llm.reflect, j, state, case)
+                state = state.update_juror(j.id, inner_reasoning=r)
+                await emit({"type": "reflection", "juror_id": j.id, "name": j.persona.name, "text": r})
+            for ev in llm.drain_errors():
+                await emit(ev)
         state = await _ai_phase(state, case, llm, emit)
         state = await _response_phase(state, case, llm, emit)
 
@@ -279,6 +341,10 @@ async def run_game(state: GameState, case: Case, llm, emit: Emit, get_action: Ge
             state = state.finish("hung")
         else:
             state = state.next_round()
+
+    if _beliefs_on():
+        opinions = [j.beliefs.opinion for j in state.ai_jurors if j.beliefs is not None]
+        await emit({"type": "metrics", **metrics.summary(belief_updates, opinions)})
 
     # final LLM-as-a-Judge scorecard for the human
     score = await asyncio.to_thread(evaluation.score_human, state, case, llm)

@@ -66,6 +66,16 @@ def choose_move(speaker: JurorState, guesses: Sequence[ToMGuess],
     return Move(target.opponent_id, tactic, target.weakest_point or "")
 
 
+def move_against(target_id: str, guesses: Sequence[ToMGuess]) -> Move:
+    """Build a Move aimed at a SPECIFIC opponent (used in the response phase, where
+    the responder is already replying to the last speaker). Tactic from openness."""
+    g = next((x for x in guesses if x.opponent_id == target_id), None)
+    if g is None:
+        return Move(target_id, ATTACK_WEAKEST, "")
+    tactic = ATTACK_WEAKEST if g.est_openness >= OPEN_ROUTE_THRESHOLD else COMMON_GROUND
+    return Move(target_id, tactic, g.weakest_point or "")
+
+
 # Human-readable tactic guidance injected into the generation prompt.
 TACTIC_GUIDANCE = {
     ATTACK_WEAKEST: {

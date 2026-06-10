@@ -51,7 +51,9 @@ export interface LogItem {
     | "human"
     | "error"
     | "belief_update"
-    | "strategy";
+    | "strategy"
+    | "metrics"
+    | "reflection";
   jurorId?: string;
   name?: string;
   text?: string;
@@ -69,6 +71,9 @@ export interface LogItem {
   targetId?: string;
   tactic?: string;
   targetPoint?: string;
+  convergence?: number;
+  polarization?: number;
+  topInfluencer?: string | null;
 }
 
 export interface ViewState {

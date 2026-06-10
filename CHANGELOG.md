@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.6.0] - 2026-06-09
+### Features — completes the remaining CDA roadmap (all additive + flag-gated)
+- **Frontend visibility**: juror cards show an **opinion (lean) + conviction bar**; the
+  deliberation stream renders `belief_update` (🧠), `strategy` (🎯), `metrics` (📊),
+  `reflection` (🪞) lines and **token-streamed** `speak_delta`. `Juror` gains
+  `opinion/conviction/belief_stance`; reducer + i18n (en/zh) extended. Reducer ignores
+  unknown events, so all additions are backward-compatible.
+- **Metrics** (`jury/metrics.py`, pure): convergence, polarization, top-influencer, and a
+  who-convinced-whom edge list; emitted as a `metrics` event before the scorecard.
+- **Drive-based scheduler** (`jury/scheduler.py`, pure): speaking order from belief-aware
+  drives (reactivity + disagreement-with-room + conviction) when beliefs on; legacy
+  `speaking_score` sort otherwise.
+- **Response-phase ToM**: rebuttals now run `strategy.move_against` the last speaker
+  (targeted), emitting a `strategy` event; `respond()` gains an optional `move`.
+- **Toulmin arguments (lite)**: `llm.extract_arguments` populates `BeliefStack.arguments`
+  at game start (`JURY_TOM`); ToM's `weakest_point` becomes the lowest-strength argument's
+  warrant. Belief math stays scalar (no regression).
+- **Fast model tier**: `JuryLLM.fast` (`JURY_FAST_MODEL`) serves judge/ToM/args/reflection
+  (structured, unseen calls); generation stays on the big model.
+- **Reflection (lite, `JURY_REFLECT`)**: per-round one-line `reflect()` refreshing
+  `inner_reasoning`, emitted as `reflection` events.
+- **Streaming (`JURY_STREAM`)**: utterances emit as `speak_start`/`speak_delta`/`speak_end`
+  (chunked replay in v1; true token-level TTFT streaming is the one remaining deferral).
+- Tests: `test_metrics.py`, `test_scheduler.py`, `test_tom.py`, `test_engine_stream.py`
+  (+ earlier suites). Full suite **56 passing**.
+### Notes & Caveats
+- Each capability is gated by its own env flag; the default product path and legacy tests
+  are unchanged. Streaming is computed-then-chunked (verifiable offline); swapping in
+  true `creative.stream()` token streaming is left as a focused follow-up.
+- Still deferred (needs data/GPU, low demo ROI): fine-tuning / RL strategy (ToMAP/OSCToM/
+  DebateQD), higher-order ToM, full layered Values→Beliefs→Attitudes stack.
+
 ## [0.5.0] - 2026-06-09
 ### Features
 - **CDA v2 — agent Theory of Mind + targeted persuasion** (opt-in, `JURY_TOM=1`;

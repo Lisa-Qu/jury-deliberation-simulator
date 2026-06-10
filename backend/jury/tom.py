@@ -15,6 +15,13 @@ from .cases import Case
 from .state import GameState, JurorState, ToMGuess
 
 
+def _weakest(b) -> str:
+    """The warrant of the opponent's lowest-strength argument (their soft spot)."""
+    if b.arguments:
+        return min(b.arguments, key=lambda a: a.strength).warrant
+    return ""
+
+
 def _heuristic(speaker: JurorState, state: GameState) -> tuple[ToMGuess, ...]:
     """LLM-free fallback: approximate each opponent from their belief stack."""
     out = []
@@ -22,7 +29,7 @@ def _heuristic(speaker: JurorState, state: GameState) -> tuple[ToMGuess, ...]:
         if j.id == speaker.id or j.beliefs is None:
             continue
         out.append(ToMGuess(opponent_id=j.id, est_opinion=j.beliefs.opinion,
-                            weakest_point="", est_openness=j.beliefs.epsilon))
+                            weakest_point=_weakest(j.beliefs), est_openness=j.beliefs.epsilon))
     return tuple(out)
 
 

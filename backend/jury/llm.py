@@ -72,10 +72,13 @@ class JuryLLM:
         from langchain_google_genai import ChatGoogleGenerativeAI
 
         model = model or os.environ.get("JURY_MODEL", "gemini-1.5-flash")
+        fast_model = os.environ.get("JURY_FAST_MODEL", model)  # cheap tier for internal calls
         self.retriever = retriever
         self.lang = lang
         self.creative = ChatGoogleGenerativeAI(model=model, temperature=0.85)
         self.precise = ChatGoogleGenerativeAI(model=model, temperature=0.3)
+        # judge / ToM / argument-extraction / reflection are structured + unseen → fast tier
+        self.fast = ChatGoogleGenerativeAI(model=fast_model, temperature=0.2)
         self.tooled = self.creative.bind_tools([lookup_evidence])
         self.errors: list[dict] = []
 
@@ -146,8 +149,8 @@ class JuryLLM:
                                on_tool_call, on_tool_result, stage="speak")
 
     def respond(self, juror, state, case, target_name, target_text,
-                on_tool_call, on_tool_result) -> tuple[str, Vote]:
-        prompt = prompts.respond_prompt(juror, state, case, target_name, target_text, self.lang)
+                on_tool_call, on_tool_result, move=None) -> tuple[str, Vote]:
+        prompt = prompts.respond_prompt(juror, state, case, target_name, target_text, self.lang, move)
         return self._statement(juror, case, prompt, on_tool_call, on_tool_result,
                                stage="respond")
 
@@ -174,7 +177,7 @@ class JuryLLM:
         """CDA influence evaluator — score a statement's argument quality (0..1)
         and flag fallacies. Off the visible path; feeds the belief-update engine."""
         def run() -> dict:
-            out = self.precise.invoke(
+            out = self.fast.invoke(
                 [HumanMessage(prompts.judge_prompt(statement, case, self.lang))]
             ).content
             return {"quality": clamp_score(extract_tag(out, "quality"), 50) / 100.0,
@@ -186,13 +189,34 @@ class JuryLLM:
         """CDA Theory of Mind — infer each opponent's mind from the transcript.
         Returns a list of {opponent_id, est_opinion, weakest_point, est_openness}."""
         def run() -> list[dict]:
-            out = self.precise.invoke(
+            out = self.fast.invoke(
                 [HumanMessage(prompts.tom_prompt(juror, state, case, self.lang))]
             ).content
             block = re.search(r"\[.*\]", out, re.S)
             return json.loads(block.group(0) if block else out)
 
         return self._safe(run, fallback=[], stage="tom")
+
+    def extract_arguments(self, juror: JurorState, case: Case) -> list[dict]:
+        """CDA Toulmin extraction — the juror's supporting arguments at game start.
+        Returns a list of {claim, grounds, warrant, strength}."""
+        def run() -> list[dict]:
+            out = self.fast.invoke(
+                [HumanMessage(prompts.args_prompt(juror, case, self.lang))]
+            ).content
+            block = re.search(r"\[.*\]", out, re.S)
+            return json.loads(block.group(0) if block else out)
+
+        return self._safe(run, fallback=[], stage="args")
+
+    def reflect(self, juror: JurorState, state: GameState, case: Case) -> str:
+        """CDA periodic reflection — one-line synthesis, refreshes inner_reasoning."""
+        def run() -> str:
+            return self.fast.invoke(
+                [HumanMessage(prompts.reflect_prompt(juror, state, self.lang))]
+            ).content.strip()
+
+        return self._safe(run, fallback=juror.inner_reasoning, stage="reflect")
 
     def generate_personas(self, case: Case, n: int) -> list[dict]:
         def run() -> list[dict]:

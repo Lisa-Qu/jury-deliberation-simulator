@@ -102,6 +102,8 @@ const KIND_ICON: Record<string, string> = {
   error: "⚠️",
   belief_update: "🧠",
   strategy: "🎯",
+  metrics: "📊",
+  reflection: "🪞",
 };
 
 export function TranscriptStream({ log, t }: { log: LogItem[]; t: T }) {
@@ -141,6 +143,12 @@ export function TranscriptStream({ log, t }: { log: LogItem[]; t: T }) {
                 💭 {it.name}: {it.text}
               </div>
             );
+          if (it.kind === "reflection")
+            return (
+              <div key={it.id} className="text-xs text-sky-400/80 italic pl-4">
+                🪞 {it.name}: {it.text}
+              </div>
+            );
           if (it.kind === "belief_update")
             return (
               <div key={it.id} className="text-xs text-purple-300 pl-4">
@@ -152,6 +160,13 @@ export function TranscriptStream({ log, t }: { log: LogItem[]; t: T }) {
               <div key={it.id} className="text-xs text-teal-300 pl-4">
                 🎯 {it.name} {t.strategy.targets} {it.target} · {t.strategy.tactic[it.tactic ?? "assert"] ?? it.tactic}
                 {it.targetPoint ? ` (${it.targetPoint})` : ""}
+              </div>
+            );
+          if (it.kind === "metrics")
+            return (
+              <div key={it.id} className="text-xs text-amber-400 border-t border-stone-700 mt-1 pt-1">
+                📊 {t.metrics.convergence} {it.convergence} · {t.metrics.polarization} {it.polarization}
+                {it.topInfluencer ? ` · ${t.metrics.top}: ${it.topInfluencer}` : ""}
               </div>
             );
           return (

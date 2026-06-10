@@ -217,6 +217,41 @@ def tom_prompt(speaker: JurorState, state: GameState, case: Case, lang: str = "e
     )
 
 
+def reflect_prompt(juror: JurorState, state: GameState, lang: str = "en") -> str:
+    """CDA reflection (generative-agents style): a one-line synthesis of where the
+    juror now stands, refreshed periodically. Updates inner_reasoning."""
+    if lang == "zh":
+        return (
+            f"你是 {juror.persona.name}。看目前评议，用一句话总结你现在的整体判断和下一步打算。\n\n"
+            f"{render_transcript(state, last=10)}\n\n只回一句中文。"
+        )
+    return (
+        f"You are {juror.persona.name}. Given the deliberation so far, summarize in ONE "
+        f"sentence your overall current judgment and next intention.\n\n"
+        f"{render_transcript(state, last=10)}\n\nReply with one sentence only."
+    )
+
+
+def args_prompt(juror: JurorState, case: Case, lang: str = "en") -> str:
+    """Ask a juror to lay out 2-3 Toulmin-structured arguments for their stance.
+    Structured JSON (consumed by jury/state.ToulminArg); feeds ToM weakest-point."""
+    p = juror.persona
+    if lang == "zh":
+        return (
+            f"你是陪审员 {p.name}（倾向 {juror.vote}）。案件：{case.title} —— {case.charge}\n\n"
+            f"列出支撑你立场的 2-3 个论点。每个给 JSON 对象放进数组：\n"
+            f'{{"claim": 主张, "grounds": 依据的证据, "warrant": 连接证据到主张的假设, '
+            f'"strength": 0到1你对这条多确信}}\n只返回 JSON 数组。'
+        )
+    return (
+        f"You are juror {p.name} (leaning {juror.vote}). Case: {case.title} — {case.charge}\n\n"
+        f"List 2-3 arguments supporting your stance. Each as a JSON object in an array:\n"
+        f'{{"claim": the point, "grounds": the evidence behind it, '
+        f'"warrant": the assumption linking grounds to claim, "strength": 0..1 how firmly you hold it}}\n'
+        f"Return ONLY the JSON array."
+    )
+
+
 def rolegen_prompt(case: Case, n: int, lang: str = "en") -> str:
     if lang == "zh":
         return (

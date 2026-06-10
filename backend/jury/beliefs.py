@@ -22,9 +22,23 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from .state import BeliefStack, GameState, Vote
+from .state import BeliefStack, GameState, ToulminArg, Vote
 
 LEARNING_RATE = 0.3       # global step size on each update
+
+
+def set_arguments(stack: BeliefStack, raw: list) -> BeliefStack:
+    """Build a new BeliefStack with Toulmin arguments from extractor output
+    (list of {claim, grounds, warrant, strength}). Belief math stays scalar."""
+    args = tuple(
+        ToulminArg(
+            claim=str(r.get("claim", "")), grounds=str(r.get("grounds", "")),
+            warrant=str(r.get("warrant", "")),
+            strength=max(0.0, min(1.0, float(r.get("strength", 0.5)))),
+        )
+        for r in raw if isinstance(r, dict)
+    )
+    return replace(stack, arguments=args)
 
 
 def _clamp(x: float, lo: float = -1.0, hi: float = 1.0) -> float:

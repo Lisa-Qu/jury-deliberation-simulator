@@ -50,6 +50,7 @@ const EN = {
       assert: "assert",
     } as Record<string, string>,
   },
+  metrics: { convergence: "convergence", polarization: "polarization", top: "top influencer" },
   verdictLabel: "Verdict",
   dims: {
     persuasiveness: "Persuasiveness",
@@ -109,6 +110,7 @@ const ZH: T = {
       assert: "陈述立场",
     },
   },
+  metrics: { convergence: "收敛度", polarization: "极化度", top: "最大影响者" },
   verdictLabel: "裁决",
   dims: {
     persuasiveness: "说服力",

@@ -103,8 +103,14 @@ class StubLLM:
     def tom_read(self, juror, state, case):
         return []      # offline → tom.py falls back to the belief-state heuristic
 
+    def extract_arguments(self, juror, case):
+        return []      # offline → arguments stay empty (opinion scalar carries state)
+
+    def reflect(self, juror, state, case):
+        return juror.inner_reasoning or self.think(juror, state, case)
+
     def respond(self, juror, state, case, target_name, target_text,
-                on_tool_call, on_tool_result):
+                on_tool_call, on_tool_result, move=None):
         L = self._lines(juror)
         on_tool_call(L["q_zh"] if self._zh else L["q_en"])
         on_tool_result(self.retriever.lookup(f'{L["q_zh"]} {L["q_en"]}', k=1))

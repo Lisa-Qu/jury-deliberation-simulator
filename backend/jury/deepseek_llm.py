@@ -119,8 +119,8 @@ class DeepSeekLLM:
                                on_tool_call, on_tool_result, stage="speak")
 
     def respond(self, juror, state, case, target_name, target_text,
-                on_tool_call, on_tool_result):
-        prompt = prompts.respond_prompt(juror, state, case, target_name, target_text, self.lang)
+                on_tool_call, on_tool_result, move=None):
+        prompt = prompts.respond_prompt(juror, state, case, target_name, target_text, self.lang, move)
         return self._statement(juror, case, prompt, on_tool_call, on_tool_result, stage="respond")
 
     def revote(self, juror, state, case) -> tuple[Vote, str]:
@@ -163,6 +163,27 @@ class DeepSeekLLM:
             return json.loads(block.group(0) if block else out)
 
         return self._safe(run, fallback=[], stage="tom")
+
+    def extract_arguments(self, juror, case) -> list[dict]:
+        def run() -> list[dict]:
+            import re
+            out = self._chat(
+                [{"role": "user", "content": prompts.args_prompt(juror, case, self.lang)}],
+                temperature=0.3,
+            ).choices[0].message.content or ""
+            block = re.search(r"\[.*\]", out, re.S)
+            return json.loads(block.group(0) if block else out)
+
+        return self._safe(run, fallback=[], stage="args")
+
+    def reflect(self, juror, state, case) -> str:
+        def run() -> str:
+            return (self._chat(
+                [{"role": "user", "content": prompts.reflect_prompt(juror, state, self.lang)}],
+                temperature=0.3,
+            ).choices[0].message.content or "").strip()
+
+        return self._safe(run, fallback=juror.inner_reasoning, stage="reflect")
 
     def generate_personas(self, case, n) -> list[dict]:
         def run():
