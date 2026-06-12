@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from jury import cases, config, engine, personas
+from jury import cases, config, engine, obs, personas
 from jury.llm import JuryLLM
 from jury.rag import EvidenceRetriever
 from jury.state import GameState
@@ -86,6 +86,7 @@ async def _run(session: GameSession, mode: str, case_id: str | None, lang: str) 
         state = GameState(case_id=case.id, round=1, jurors=jurors, max_rounds=_max_rounds())
 
         async def emit(ev: dict) -> None:
+            obs.trace_event(ev)            # structured tracing when JURY_TRACE=1
             await session.out.put(ev)
 
         async def get_action() -> dict:

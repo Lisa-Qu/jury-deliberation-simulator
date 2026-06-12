@@ -20,6 +20,7 @@ from langchain_core.tools import tool
 from . import prompts
 from .cases import Case
 from .rag import EvidenceRetriever, Hits
+from .schemas import JudgeResult
 from .state import GameState, JurorState, Vote
 
 VOTES = ("GUILTY", "NOT_GUILTY", "UNDECIDED")
@@ -204,8 +205,8 @@ class JuryLLM:
             out = self.fast.invoke(
                 [HumanMessage(prompts.judge_prompt(statement, case, self.lang))]
             ).content
-            return {"quality": clamp_score(extract_tag(out, "quality"), 50) / 100.0,
-                    "fallacy": extract_tag(out, "fallacy", "none")}
+            return JudgeResult(quality=extract_tag(out, "quality") or 50,
+                               fallacy=extract_tag(out, "fallacy", "none")).model_dump()
 
         return self._safe(run, fallback={"quality": 0.5, "fallacy": "none"}, stage="judge")
 

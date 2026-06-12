@@ -13,29 +13,22 @@ generic, untargeted statement. (Offline runs get their guesses from the stub's
 from __future__ import annotations
 
 from .cases import Case
+from .schemas import ToMRead, parse_list
 from .state import GameState, JurorState, ToMGuess
-
-
-def _clamp(x: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, x))
 
 
 def update_tom(speaker: JurorState, state: GameState, llm, case: Case) -> tuple[ToMGuess, ...]:
     """Return the speaker's ToM guesses about every other AI juror, inferred by the
-    LLM. Empty tuple when there's no read (no tom_read / error / nothing returned)."""
+    LLM and validated through the `ToMRead` pydantic schema. Empty tuple when there's
+    no read (no tom_read / error / nothing returned)."""
     if speaker.beliefs is None or not hasattr(llm, "tom_read"):
         return ()
     raw = llm.tom_read(speaker, state, case) or []
     valid = {j.id for j in state.ai_jurors if j.id != speaker.id}
     guesses = []
-    for r in raw:
-        oid = r.get("opponent_id")
-        if oid not in valid:
+    for r in parse_list(ToMRead, raw):       # pydantic-validated + coerced
+        if r.opponent_id not in valid:
             continue
-        guesses.append(ToMGuess(
-            opponent_id=oid,
-            est_opinion=_clamp(float(r.get("est_opinion", 0.0)), -1.0, 1.0),
-            weakest_point=str(r.get("weakest_point", "")),
-            est_openness=_clamp(float(r.get("est_openness", 0.6)), 0.0, 1.0),
-        ))
+        guesses.append(ToMGuess(opponent_id=r.opponent_id, est_opinion=r.est_opinion,
+                                weakest_point=r.weakest_point, est_openness=r.est_openness))
     return tuple(guesses)
