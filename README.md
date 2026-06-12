@@ -15,6 +15,8 @@ round, and an **LLM-as-a-Judge** grades your participation at the end.
 ![Gemini](https://img.shields.io/badge/Gemini-1.5%20Flash-8E75B2?logo=googlegemini&logoColor=white)
 ![LangChain](https://img.shields.io/badge/LangChain-bind__tools-1C3C3C?logo=langchain&logoColor=white)
 ![Tests](https://img.shields.io/badge/tests-58%20passing-2ea44f)
+![Docker](https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white)
+![CI](https://github.com/Lisa-Qu/jury-deliberation-simulator/actions/workflows/ci.yml/badge.svg)
 
 ---
 
@@ -203,6 +205,16 @@ Demo the full stack: `JURY_BELIEFS=1 JURY_TOM=1 JURY_STREAM=1 JURY_REFLECT=1 uvi
 | `jury/strategy.py` | target + tactic selection (pure Python) |
 | `jury/scheduler.py` | belief-aware drive speaking order |
 | `jury/metrics.py` | convergence · polarization · who-convinced-whom |
+
+## 🐳 Run with Docker (one command)
+
+```bash
+GEMINI_API_KEY=sk-... docker compose up --build         # → http://localhost:5173
+JURY_FAKE_LLM=1 docker compose up --build               # offline, no API key
+JURY_BELIEFS=1 JURY_TOM=1 JURY_STREAM=1 GEMINI_API_KEY=… docker compose up --build   # full CDA
+```
+Backend (FastAPI/SSE) and frontend (nginx, proxies `/api` → backend) build into two
+containers. CI (GitHub Actions) runs the pytest suite + frontend build on every push.
 
 ## 🚀 Run it (local, live Gemini)
 

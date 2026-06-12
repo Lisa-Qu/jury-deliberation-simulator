@@ -1,0 +1,28 @@
+# One-command local stack: backend (FastAPI/SSE) + frontend (nginx).
+# Usage: GEMINI_API_KEY=... docker compose up --build   → http://localhost:5173
+# Offline (no key):  JURY_FAKE_LLM=1 docker compose up --build
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - JURY_FAKE_LLM=${JURY_FAKE_LLM:-}
+      - JURY_BELIEFS=${JURY_BELIEFS:-}
+      - JURY_TOM=${JURY_TOM:-}
+      - JURY_STREAM=${JURY_STREAM:-}
+      - JURY_REFLECT=${JURY_REFLECT:-}
+      - JURY_FAST_MODEL=${JURY_FAST_MODEL:-}
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
