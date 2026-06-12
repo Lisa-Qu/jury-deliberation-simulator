@@ -92,7 +92,14 @@ async def _run(session: GameSession, mode: str, case_id: str | None, lang: str) 
         async def get_action() -> dict:
             return await session.inbox.get()
 
-        await engine.run_game(state, case, llm, emit, get_action)
+        runner = engine.run_game
+        if os.environ.get("JURY_LANGGRAPH", "").lower() in ("1", "true", "yes"):
+            try:
+                from jury.graph import run_game_langgraph
+                runner = run_game_langgraph
+            except ImportError:
+                pass                       # langgraph not installed → hand-rolled loop
+        await runner(state, case, llm, emit, get_action)
     except Exception as e:  # noqa: BLE001 — surface fatal errors to the client
         await session.out.put(
             {"type": "error", "stage": "fatal", "message": str(e)[:300], "recovered": False}

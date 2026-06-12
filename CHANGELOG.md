@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.7.0] - 2026-06-13
+### Features — standards, infra & deployment (resume-keyword pass; all additive)
+- **MCP server** (`backend/mcp_server.py`) — re-exposes the evidence RAG as a **Model Context
+  Protocol** tool (`lookup_evidence`) over stdio; self-contained (offline embedder, no key).
+- **LangGraph** (`jury/graph.py`, `JURY_LANGGRAPH=1`) — opt-in `StateGraph` orchestration whose
+  nodes reuse the exact phase functions, so it is behavior-identical to the hand-rolled loop.
+  `engine.run_game` refactored into shared helpers (`setup_cda`/`reflect_round`/`settle_round`/
+  `finalize`) so both paths can't diverge.
+- **Docker + Compose + CI** — `backend/Dockerfile`, `frontend/Dockerfile` (vite→nginx, SSE-safe
+  proxy), `docker-compose.yml` (one-command stack), `.github/workflows/ci.yml` (pytest + build).
+- **Pydantic structured outputs** (`jury/schemas.py`) — `JudgeResult`/`ToMRead`/`ArgumentOut`
+  centralize validation+coercion of LLM JSON; wired into ToM, args, and judge.
+- **Observability** (`jury/obs.py`, `JURY_TRACE=1`) — structured per-event tracing.
+- **Offline eval harness** (`jury/evalrun.py`) — `python -m jury.evalrun N` aggregates
+  convergence / polarization / belief-movement over K stub deliberations.
+- Tests +11 → **69 passing** (MCP, LangGraph-vs-loop equivalence, schemas/obs/eval).
+### Design Rationale
+- The **belief gates stay pure numpy** (deterministic, reproducible) — deliberately NOT converted
+  to tool-calls/agents, which would add latency + nondeterminism for arithmetic. Tool-calling
+  remains where it belongs (the RAG tool, now also an MCP tool).
+- New deps (`langgraph`, `mcp`, `openai`) are optional/lazy; CI installs them and runs the guarded
+  tests on a clean environment.
+
 ## [0.6.1] - 2026-06-09
 ### Features
 - **TRUE token streaming** (`JURY_STREAM`, replaces the v1 chunked replay): new

@@ -14,7 +14,9 @@ round, and an **LLM-as-a-Judge** grades your participation at the end.
 ![React](https://img.shields.io/badge/React-Vite%20%2B%20TS-61DAFB?logo=react&logoColor=black)
 ![Gemini](https://img.shields.io/badge/Gemini-1.5%20Flash-8E75B2?logo=googlegemini&logoColor=white)
 ![LangChain](https://img.shields.io/badge/LangChain-bind__tools-1C3C3C?logo=langchain&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-58%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-69%20passing-2ea44f)
+![MCP](https://img.shields.io/badge/MCP-server-000000)
+![LangGraph](https://img.shields.io/badge/LangGraph-StateGraph-1C3C3C)
 ![Docker](https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white)
 ![CI](https://github.com/Lisa-Qu/jury-deliberation-simulator/actions/workflows/ci.yml/badge.svg)
 
@@ -194,8 +196,19 @@ to the UI.
 | `JURY_STREAM=1` | true token streaming of utterances (`speak_delta`) via RAG pre-fetch |
 | `JURY_REFLECT=1` | periodic one-line self-reflection |
 | `JURY_FAST_MODEL=…` | cheap model tier for judge / ToM / args / reflection |
+| `JURY_LANGGRAPH=1` | run the deliberation via a **LangGraph** `StateGraph` (same phases as nodes) |
+| `JURY_TRACE=1` | structured per-event tracing to logs (observability) |
 
 Demo the full stack: `JURY_BELIEFS=1 JURY_TOM=1 JURY_STREAM=1 JURY_REFLECT=1 uvicorn server:app`.
+
+### Standards & infra
+- **MCP server** (`backend/mcp_server.py`) re-exposes the evidence RAG as a
+  **Model Context Protocol** tool: `python backend/mcp_server.py` → any MCP client can call
+  `lookup_evidence`.
+- **LangGraph** (`jury/graph.py`) — an opt-in `StateGraph` orchestration that reuses the exact
+  phase functions, so it's behavior-identical to the hand-rolled loop (verified by a test).
+- **Structured outputs** via pydantic (`jury/schemas.py`); **observability** (`jury/obs.py`);
+  **offline eval harness** (`python -m jury.evalrun N`); **Docker + Compose + GitHub Actions CI**.
 
 ### Modules (all additive)
 | File | Role |

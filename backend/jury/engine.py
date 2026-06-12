@@ -361,34 +361,72 @@ async def _closing_votes(state: GameState, case: Case, llm, emit: Emit) -> GameS
 # --------------------------------------------------------------------------- #
 # Main loop.
 # --------------------------------------------------------------------------- #
-async def run_game(state: GameState, case: Case, llm, emit: Emit, get_action: GetAction):
+# Reusable pieces — shared by the hand-rolled loop (run_game) and the LangGraph
+# orchestration variant (jury/graph.py), so both stay behavior-identical.
+async def setup_cda(state: GameState, case: Case, llm, emit: Emit):
+    """Attach the belief model + Toulmin args; wrap emit to capture belief_update
+    events for metrics. Returns (state, emit, belief_updates)."""
     belief_updates: list[dict] = []
+    if not _beliefs_on():
+        return state, emit, belief_updates
+    state = belief_engine.attach_initial(state)
+    if _tom_on():
+        for j in state.ai_jurors:
+            raw = await asyncio.to_thread(llm.extract_arguments, j, case)
+            if raw:
+                state = state.update_beliefs(j.id, belief_engine.set_arguments(j.beliefs, raw))
+    base_emit = emit
+
+    async def wrapped(ev: dict) -> None:
+        if ev.get("type") == "belief_update":
+            belief_updates.append(ev)
+        await base_emit(ev)
+
+    return state, wrapped, belief_updates
+
+
+async def reflect_round(state: GameState, case: Case, llm, emit: Emit) -> GameState:
+    if not _reflect_on():
+        return state
+    for j in state.ai_jurors:
+        r = await asyncio.to_thread(llm.reflect, j, state, case)
+        state = state.update_juror(j.id, inner_reasoning=r)
+        await emit({"type": "reflection", "juror_id": j.id, "name": j.persona.name, "text": r})
+    for ev in llm.drain_errors():
+        await emit(ev)
+    return state
+
+
+async def settle_round(state: GameState, emit: Emit) -> GameState:
+    """Emit the round tally and advance/finish the game. Returns the new state."""
+    consensus = state.consensus()
+    last_round = state.round >= state.max_rounds
+    status = "unanimous" if consensus else ("hung" if last_round else "open")
+    await emit({"type": "tally", "votes": state.tally(), "status": status, "round": state.round})
+    if consensus:
+        return state.finish(f"unanimous:{consensus}")
+    if last_round:
+        return state.finish("hung")
+    return state.next_round()
+
+
+async def finalize(state: GameState, case: Case, llm, emit: Emit, belief_updates: list) -> GameState:
     if _beliefs_on():
-        state = belief_engine.attach_initial(state)   # CDA opt-in belief model
-        if _tom_on():
-            # Toulmin arguments per juror (feeds ToM weakest-point). Offline → empty → no-op.
-            for j in state.ai_jurors:
-                raw = await asyncio.to_thread(llm.extract_arguments, j, case)
-                if raw:
-                    state = state.update_beliefs(j.id, belief_engine.set_arguments(j.beliefs, raw))
-        base_emit = emit
+        opinions = [j.beliefs.opinion for j in state.ai_jurors if j.beliefs is not None]
+        await emit({"type": "metrics", **metrics.summary(belief_updates, opinions)})
+    score = await asyncio.to_thread(evaluation.score_human, state, case, llm)
+    await emit({"type": "scorecard", "verdict": state.verdict, **score, **state.public()})
+    await emit({"type": "done"})
+    return state
 
-        async def emit(ev: dict) -> None:             # capture belief_update for metrics
-            if ev.get("type") == "belief_update":
-                belief_updates.append(ev)
-            await base_emit(ev)
 
+async def run_game(state: GameState, case: Case, llm, emit: Emit, get_action: GetAction):
+    state, emit, belief_updates = await setup_cda(state, case, llm, emit)
     await emit({"type": "game_start", **state.public()})
 
     while not state.verdict_reached:
         await emit({"type": "round_start", "round": state.round})
-        if _reflect_on():
-            for j in state.ai_jurors:
-                r = await asyncio.to_thread(llm.reflect, j, state, case)
-                state = state.update_juror(j.id, inner_reasoning=r)
-                await emit({"type": "reflection", "juror_id": j.id, "name": j.persona.name, "text": r})
-            for ev in llm.drain_errors():
-                await emit(ev)
+        state = await reflect_round(state, case, llm, emit)
         state = await _ai_phase(state, case, llm, emit)
         state = await _response_phase(state, case, llm, emit)
 
@@ -398,25 +436,6 @@ async def run_game(state: GameState, case: Case, llm, emit: Emit, get_action: Ge
             break
 
         state = await _closing_votes(state, case, llm, emit)
-        consensus = state.consensus()
-        last_round = state.round >= state.max_rounds
-        status = "unanimous" if consensus else ("hung" if last_round else "open")
-        await emit({"type": "tally", "votes": state.tally(), "status": status,
-                    "round": state.round})
+        state = await settle_round(state, emit)
 
-        if consensus:
-            state = state.finish(f"unanimous:{consensus}")
-        elif last_round:
-            state = state.finish("hung")
-        else:
-            state = state.next_round()
-
-    if _beliefs_on():
-        opinions = [j.beliefs.opinion for j in state.ai_jurors if j.beliefs is not None]
-        await emit({"type": "metrics", **metrics.summary(belief_updates, opinions)})
-
-    # final LLM-as-a-Judge scorecard for the human
-    score = await asyncio.to_thread(evaluation.score_human, state, case, llm)
-    await emit({"type": "scorecard", "verdict": state.verdict, **score, **state.public()})
-    await emit({"type": "done"})
-    return state
+    return await finalize(state, case, llm, emit, belief_updates)
