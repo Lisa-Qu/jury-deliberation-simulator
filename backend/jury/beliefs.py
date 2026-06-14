@@ -53,7 +53,7 @@ def update_belief(
     quality: float,
     *,
     source_credibility: float = 0.5,
-    learning_rate: float = LEARNING_RATE,
+    learning_rate: float | None = None,   # None → read module-global LEARNING_RATE at call time
 ) -> BeliefStack:
     """Return a NEW BeliefStack for ``listener`` after hearing a statement of the
     given ``quality`` (0..1) from someone at ``speaker_opinion`` (-1..1).
@@ -72,7 +72,7 @@ def update_belief(
 
     # gate 4 (identity): high stake damps the update; never inverts it.
     influence *= (1.0 - listener.identity_stake)
-    influence *= learning_rate
+    influence *= LEARNING_RATE if learning_rate is None else learning_rate
     influence = max(0.0, influence)
 
     pull = (speaker_opinion - cur) * influence
